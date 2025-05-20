@@ -1,5 +1,11 @@
 # eRAG_v1.0
 
+# eRAG_v1.0
+
+## Links
+KILT Benchmark: https://github.com/facebookresearch/KILT/tree/main <br>
+eRAG: https://github.com/alirezasalemi7/eRAG/tree/main <br>
+
 ## 1. Create a conda environment
 ```bash
 conda env create -f environment.yml
@@ -12,7 +18,8 @@ mkdir -p data
 ```
 
 ## Download the NQ dataset (e.g., the dev file)
-```bash wget -O data/nq-dev-kilt.jsonl http://dl.fbaipublicfiles.com/KILT/nq-dev-kilt.jsonl
+```bash 
+wget -O data/nq-dev-kilt.jsonl http://dl.fbaipublicfiles.com/KILT/nq-dev-kilt.jsonl
 wget -O data/nq-train-kilt.jsonl http://dl.fbaipublicfiles.com/KILT/nq-train-kilt.jsonl
 wget -O data/nq-test_without_answers-kilt.jsonl http://dl.fbaipublicfiles.com/KILT/nq-test_without_answers-kilt.jsonl
 ```
