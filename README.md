@@ -17,7 +17,7 @@ wget -O data/nq-train-kilt.jsonl http://dl.fbaipublicfiles.com/KILT/nq-train-kil
 wget -O data/nq-test_without_answers-kilt.jsonl http://dl.fbaipublicfiles.com/KILT/nq-test_without_answers-kilt.jsonl
 ```
 
-## Download the Wikipedia Dump with this command
+## Download the Wikipedia Dump
 ```bash
 wget -O data/wikipedia_dump.jsonl http://dl.fbaipublicfiles.com/KILT/kilt_knowledgesource.json
 ```
