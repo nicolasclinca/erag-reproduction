@@ -1,7 +1,5 @@
 # eRAG_v1.0
 
-# eRAG_v1.0
-
 ## Links
 KILT Benchmark: https://github.com/facebookresearch/KILT/tree/main <br>
 eRAG: https://github.com/alirezasalemi7/eRAG/tree/main <br>
