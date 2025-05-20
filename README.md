@@ -13,10 +13,10 @@ Activate the environment
 conda activate nome_ambiente
 ```
 
-## 2. Create a directory for data if it doesn't exist
+## 2. Create these directories
 The data directory must contain all the datasets
 ```bash
-mkdir -p data
+mkdir -p data/collection, indexes/bm25_index, indexes/faiss_index, models, logs
 ```
 
 ## Download the NQ dataset (e.g., the dev file)
