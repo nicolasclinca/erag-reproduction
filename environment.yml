@@ -1,0 +1,26 @@
+name: erag_env
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults 
+dependencies:
+  - python==3.11
+  - scipy==1.15.2
+  - numpy==1.26.4
+  - scikit-learn==1.6.1
+  - pytorch=2.5.1
+  - torchvision=0.20.1
+  - torchaudio=2.5.1
+  - pytorch-cuda=11.8
+  - faiss-cpu==1.9.0 
+  - google-generativeai==0.8.5 
+  - ujson==5.10.0
+  - tqdm
+  - openjdk==21
+  - pip
+  - pip:
+    - transformers==4.51.3
+    - pytrec_eval==0.5
+    - pyserini==0.44.0
+    - erag
