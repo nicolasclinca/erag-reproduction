@@ -1,4 +1,4 @@
-name: erag_env
+name: erag
 channels:
   - pytorch
   - nvidia
