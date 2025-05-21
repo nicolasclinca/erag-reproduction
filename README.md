@@ -6,8 +6,9 @@ eRAG: https://github.com/alirezasalemi7/eRAG/tree/main <br>
 
 
 ## 1. Clone the repository
+```bash
 git clone https://github.com/nicolasclinca/eRAG.git 
-
+```
 
 ## 2. Create these directories
 Enter the eRAG project directory(cd eRAG) and create these directory. The data directory must contain all the datasets
