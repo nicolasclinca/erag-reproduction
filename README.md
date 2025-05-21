@@ -4,19 +4,15 @@
 KILT Benchmark: https://github.com/facebookresearch/KILT/tree/main <br>
 eRAG: https://github.com/alirezasalemi7/eRAG/tree/main <br>
 
-## 1. Create a conda environment
-```bash
-conda env create -f environment.yml
-```
-Activate the environment
-```bash
-conda activate nome_ambiente
-```
 
-## 2. Create a directory for data if it doesn't exist
-The data directory must contain all the datasets
+## 1. Clone the repository
+git clone https://github.com/nicolasclinca/eRAG.git 
+
+
+## 2. Create these directories
+Enter the eRAG project directory(cd eRAG) and create these directory. The data directory must contain all the datasets
 ```bash
-mkdir -p data
+mkdir -p data/collection, indexes/bm25_index, indexes/faiss_index, models, logs
 ```
 
 ## Download the NQ dataset (e.g., the dev file)
@@ -31,7 +27,16 @@ wget -O data/nq-test_without_answers-kilt.jsonl http://dl.fbaipublicfiles.com/KI
 wget -O data/wikipedia_dump.jsonl http://dl.fbaipublicfiles.com/KILT/kilt_knowledgesource.json
 ```
 
-## 3. How to execute the code
+## 3. Create a conda environment
+```bash
+conda env create -f environment.yml
+```
+Activate the environment
+```bash
+conda activate nome_ambiente
+```
+
+## 4. How to execute the code
 1. Execute "preprocess_wikipedia.py" file
 ```bash
 python preprocess_wikipedia.py
