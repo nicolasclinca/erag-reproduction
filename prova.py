@@ -1,14 +1,5 @@
 import sys
-import os
 import time
-import datetime
-
-instant = datetime.datetime.now().strftime("%d:%m_%H:%M:%S")
-log_path = f"../logs/prova_{instant}.log"  # log file creation
-os.makedirs(os.path.dirname(log_path), exist_ok=True)  # directory creation, if not existing
-log_file = open(log_path, "a")  # log file creation
-sys.stdout = log_file  # set the log file as standard output for print functions
-sys.stderr = log_file
 
 
 def stampa(args):
@@ -19,7 +10,9 @@ def stampa(args):
 
     print(f"{nome} → Apertura file di log")
 
-    time.sleep(3)
+    for i in range(150):
+        print(i+1)
+        time.sleep(0.1)
 
     print(f"{nome} → Chiusura file di log")
 
@@ -42,4 +35,3 @@ if __name__ == "__main__":
 
     stampa(args)  # args.nome, args.apertura
 
-    log_file.close()
