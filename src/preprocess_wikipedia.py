@@ -70,6 +70,7 @@ def process_source(in_path, out_path, args, buffer_size=2_000_000):
 
             if len(buffer) >= buffer_size:
                 for doc in buffer:
+                    print(f"\n+++ Buffer emptied: {i} record processed +++\n")
                     # Save each document as JSON Lines
                     json.dump(doc, out_file)
                     out_file.write("\n")
@@ -78,10 +79,13 @@ def process_source(in_path, out_path, args, buffer_size=2_000_000):
         for doc in buffer:
             json.dump(doc, out_file)
             out_file.write("\n")
+        
 
         if max_records == 0:
+            print("Preprocessing done: all record processed")
             return "all"
         else:
+            print("Preprocessing done: " + str(max_records) + " records processed")
             return str(max_records)
 
 
