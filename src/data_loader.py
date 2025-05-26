@@ -21,7 +21,7 @@ def load_all_nq_expected_outputs(filename):
 
 
 def retrieval_results():
-    expected_outputs = load_all_nq_expected_outputs(filename="../data/nq-dev-kilt.jsonl")
+    expected_outputs = load_all_nq_expected_outputs(filename="../data/nq-train-kilt.jsonl")
     queries = list(expected_outputs.keys())
     print(f"Loaded {len(queries)} queries from NQ")
     
