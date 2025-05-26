@@ -172,6 +172,10 @@ class QA_Dataset_FiD(Dataset):
      
 
 if __name__=="__main__":
-    augmented_dataset()  
+    try:
+        augmented_dataset()  
+        print("Dataset augmented and saved.")
+    except:
+        "Errore nella creazione del dataset aumentato."
     
     
