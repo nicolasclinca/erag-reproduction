@@ -1,6 +1,6 @@
 import torch
 from tqdm.auto import tqdm
-from data_loader import QA_Dataset_FiD, data_loading
+from data_loader import QA_Dataset_FiD
 from torch.utils.data import DataLoader
 from transformers import T5Tokenizer, T5ForConditionalGeneration
 from torch.optim import AdamW

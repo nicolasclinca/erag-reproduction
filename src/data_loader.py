@@ -2,7 +2,6 @@ import json
 import torch
 from torch.utils.data import Dataset
 from retrieval_models import retrieve_documents
-from sklearn.model_selection import train_test_split
 
 
 # Load all expected outputs from the KILT NQ dev file
