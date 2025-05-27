@@ -1,4 +1,5 @@
 import torch
+import json
 from tqdm.auto import tqdm
 from data_loader import QA_Dataset_FiD
 from torch.utils.data import DataLoader
@@ -13,9 +14,11 @@ import argparse
 
 def train(args):
 
-    train_data = "../data/augmented_nq_train.json"
-    test_data = "../data/augmented_nq_dev.json"
-
+    with open("../data/augmented_nq_train.json", "r", encoding="utf-8") as f:
+        train_data = json.load(f)
+    with open("../data/augmented_nq_dev.json", "r", encoding="utf-8") as f:
+        test_data = json.load(f)
+        
     # Initialize the tokenizer
     tokenizer = T5Tokenizer.from_pretrained("t5-small")
 

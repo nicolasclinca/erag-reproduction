@@ -9,7 +9,6 @@ import scipy.stats as stats
 from functools import partial
 from transformers.modeling_outputs import BaseModelOutput
 from transformers import T5Tokenizer, T5ForConditionalGeneration
-from data_loader import data_loading
 import argparse
 
 
@@ -135,7 +134,7 @@ def T5_text_generator(
 #def model_loading(expected_outputs, retrieve_results, test_data):
 def model_loading():
     test_data = "../data/nq-dev-kilt.jsonl"
-    expected_outputs, retrieve_results = retrieve_results(test_data)
+    expected_outputs, retrieve_results = retrieve_results(filename=test_data)
     model_path = "../models/finetuned_t5_model_fid"
     max_input_len = 512
     max_output_len = 128
