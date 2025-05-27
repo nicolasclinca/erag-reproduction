@@ -20,8 +20,9 @@ def load_all_nq_expected_outputs(filename):
     return expected
 
 
-def retrieval_results():
-    expected_outputs = load_all_nq_expected_outputs(filename="../data/nq-train-kilt.jsonl")
+def retrieval_results(filename):
+    expected_outputs = load_all_nq_expected_outputs(filename)
+
     queries = list(expected_outputs.keys())
     print(f"Loaded {len(queries)} queries from NQ")
     
@@ -44,27 +45,24 @@ def augment_with_retrieved_documents(nq_dataset, retrieval_results):
 
 def augmented_dataset():
     # Augment the NQ dataset with retrieved documents
-    expected_outputs = {}
-    retrieve_res = {}
-    expected_outputs, retrieve_res = retrieval_results()
-    augmented_dataset = augment_with_retrieved_documents(expected_outputs, retrieve_res)
+    expected_outputs_train = {}
+    retrieve_res_train = {}
+    expected_outputs_train, retrieve_res_train = retrieval_results(filename="../data/nq-train-kilt.jsonl")
+    augmented_dataset_train = augment_with_retrieved_documents(expected_outputs_train, retrieve_res_train)
+    
+    expected_outputs_val= {}
+    retrieve_res_val = {}
+    expected_outputs_val, retrieve_res_val = retrieval_results(filename="../data/nq-dev-kilt.jsonl")
+    augmented_dataset_val = augment_with_retrieved_documents(expected_outputs_val, retrieve_res_val)
 
     # Save the augmented dataset to a new file for training
-    with open('../data/augmented_nq_dataset.json', 'w') as f:
-        json.dump(augmented_dataset, f, indent=4)
-
-    print(f"Augmented dataset saved with {len(augmented_dataset)} samples.")
+    with open('../data/augmented_nq_train.json', 'w') as f:
+        json.dump(augmented_dataset_train, f, indent=4)
+    print(f"Augmented train dataset saved with {len(augmented_dataset_train)} samples.")
     
-    
-def data_loading():
-    with open("../data/augmented_nq_dataset.json", "r") as f:
-        augmented_dataset = json.load(f)
-
-    # Split the dataset------------------------------------------------------------------------------------------------------------------------------------------ (due diversi dataset(?))
-    train_data, test_data = train_test_split(augmented_dataset, test_size=0.2, random_state=42)
-    expected_outputs, retrieve_results = retrieval_results()
-    return expected_outputs, retrieve_results, train_data, test_data
- 
+    with open('../data/augmented_nq_dev.json', 'w') as f:
+        json.dump(augmented_dataset_val, f, indent=4)
+    print(f"Augmented validationdataset saved with {len(augmented_dataset_val)} samples.")
 
 
 # Custom Dataset class

@@ -13,7 +13,8 @@ import argparse
 
 def train(args):
 
-    _, _, train_data, test_data = data_loading()
+    train_data = "../data/augmented_nq_train.json"
+    test_data = "../data/augmented_nq_dev.json"
 
     # Initialize the tokenizer
     tokenizer = T5Tokenizer.from_pretrained("t5-small")
