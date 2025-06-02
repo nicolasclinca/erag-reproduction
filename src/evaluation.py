@@ -164,8 +164,9 @@ def model_loading():
         num_beams=num_beams_eval
     )
     
-    with open(filename,"r", encoding="utf-8") as f:
-        test_data = [json.loads(line) for line in f]
+    with open("../data/augmented_nq_dev.json", "r", encoding="utf-8") as f:
+        test_data = json.load(f)
+        
     #Loading the Test set queries
     test_queries = set(item['query'] for item in test_data)
     print(f"\nExtracted {len(test_queries)} unique queries for the test set.")
