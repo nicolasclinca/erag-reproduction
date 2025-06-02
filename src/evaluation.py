@@ -227,7 +227,7 @@ def evaluation(args):
 
 
     # Define values for K (number of retrieved documents) and retrieval methods
-    k_values = args.k_values
+    k_values = [args.k_values]
     retriever_methods = ['BM25'] # , 'dense'
 
     # Load existing correlations from checkpoint
