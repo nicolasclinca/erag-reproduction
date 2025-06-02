@@ -243,8 +243,8 @@ def evaluation(args):
             print(f"\n--- Processing {method} with K = {k} ---")
             try:
                 # Define retrieval metrics based on k
-                retrieval_metrics = {f'P_{k}', f'success_{k}', f'recall_{k}', f'map_{k}', f'ndcg_{k}', f'recip_rank_{k}'}
-
+                #retrieval_metrics = {f'P_{k}', f'success_{k}', f'recall_{k}', f'map_{k}', f'ndcg_{k}', f'recip_rank_{k}'}
+                retrieval_metrics = {'P', 'success', 'recall', 'map', 'ndcg', 'recip_rank'}
                 # Initialize ERAG
                 #erag = ERAG
 
