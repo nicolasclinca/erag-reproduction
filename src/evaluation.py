@@ -135,9 +135,8 @@ def T5_text_generator(
 #def model_loading(expected_outputs, retrieve_results, test_data):
 def model_loading():
     # Load the test data
-    test_data = "../data/nq-dev-kilt.jsonl"
-
-    expected_outputs, retrieve_results = retrieval_results(filename=test_data)
+    filename = "../data/nq-dev-kilt.jsonl"
+    expected_outputs, retrieve_results = retrieval_results(filename=filename)
     model_path = "../models/finetuned_t5_model_fid"
     max_input_len = 512
     max_output_len = 128
@@ -165,7 +164,8 @@ def model_loading():
         num_beams=num_beams_eval
     )
     
-    
+    with open(filename,"r", encoding="utf-8") as f:
+        test_data = [json.loads(line) for line in f]
     #Loading the Test set queries
     test_queries = set(item['query'] for item in test_data)
     print(f"\nExtracted {len(test_queries)} unique queries for the test set.")
