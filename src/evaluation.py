@@ -134,7 +134,8 @@ def T5_text_generator(
 
 #def model_loading(expected_outputs, retrieve_results, test_data):
 def model_loading():
-    test_data = "../data/nq-dev-kilt.jsonl"
+    with open("../data/nq-dev-kilt.jsonl", "r", encoding="utf-8") as f:
+        test_data = json.load(f)
     expected_outputs, retrieve_results = retrieval_results(filename=test_data)
     model_path = "../models/finetuned_t5_model_fid"
     max_input_len = 512
