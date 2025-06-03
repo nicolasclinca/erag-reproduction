@@ -245,8 +245,15 @@ def evaluation(args):
             print(f"\n--- Processing {method} with K = {k} ---")
             try:
                 # Define retrieval metrics based on k
-                #retrieval_metrics = {f'P_{k}', f'success_{k}', f'recall_{k}', f'map_{k}', f'ndcg_{k}', f'recip_rank_{k}'}
-                retrieval_metrics = {'P', 'success', 'recall', 'map', 'ndcg', 'recip_rank'}
+                #retrieval_metrics = {'P', 'success', 'recall', 'map', 'ndcg', 'recip_rank'}
+                retrieval_metrics = {
+                    f'P_{k}',
+                    f'success_{k}',
+                    f'recall_{k}',
+                    f'map',
+                    f'ndcg_cut_{k}',
+                    f'recip_rank'
+                }
                 # Initialize ERAG
                 #erag = ERAG
 
@@ -289,27 +296,15 @@ def evaluation(args):
                 end_to_end_scores_list = [e2e_scores_dict.get(query, 0) for query in test_queries_list]
 
                 local_corr = {}
-                for base_metric_name in retrieval_metrics: # Iterate using the base names
-                    # Construct the actual key expected in pytrec_eval's output
-                    if base_metric_name == 'map':
-                        output_key_for_pytrec_eval = 'map'
-                    elif base_metric_name == 'recip_rank':
-                        output_key_for_pytrec_eval = 'recip_rank'
-                    elif base_metric_name == 'ndcg':
-                        output_key_for_pytrec_eval = f'ndcg_cut_{k}' 
-                    elif base_metric_name in ['P', 'recall', 'success']:
-                        output_key_for_pytrec_eval = f'{base_metric_name}_{k}'
-                    else:
-                        print(f"Warning: Unhandled base metric name '{base_metric_name}' for output key construction.")
-                        continue
-
+                for metric_name in retrieval_metrics: # Iterate using the base names
+                   
                     aligned_erag_scores = []
                     aligned_e2e_scores = []
                     num_queries_with_metric = 0
 
                     for idx, query_id in enumerate(test_queries_list):
                         query_result_dict = erag_results['per_input'].get(query_id, {})
-                        erag_score = query_result_dict.get(output_key_for_pytrec_eval)
+                        erag_score = query_result_dict.get(metric_name)
 
                         if erag_score is not None:
                             aligned_erag_scores.append(erag_score)
@@ -318,27 +313,25 @@ def evaluation(args):
                         # else: erag_score is None, so we skip this query for this metric's correlation
 
                     if num_queries_with_metric < 2:
-                        print(f"  Skipping correlation for {base_metric_name} (key {output_key_for_pytrec_eval}) for K={k}: fewer than 2 queries with this metric ({num_queries_with_metric} found).")
+                        print(f"  Skipping correlation for {metric_name} for K={k}: fewer than 2 queries with this metric ({num_queries_with_metric} found).")
                         spearman_corr, spearman_p = float('nan'), float('nan')
                         kendall_corr, kendall_p = float('nan'), float('nan')
                     elif len(set(aligned_erag_scores)) < 2 or len(set(aligned_e2e_scores)) < 2:
-                        print(f"  Skipping correlation for {base_metric_name} (key {output_key_for_pytrec_eval}) for K={k}: insufficient variance in scores ({num_queries_with_metric} pairs).")
+                        print(f"  Skipping correlation for {metric_name} for K={k}: insufficient variance in scores ({num_queries_with_metric} pairs).")
                         spearman_corr, spearman_p = float('nan'), float('nan')
                         kendall_corr, kendall_p = float('nan'), float('nan')
                     else:
                         spearman_corr, spearman_p = stats.spearmanr(aligned_erag_scores, aligned_e2e_scores)
                         kendall_corr, kendall_p = stats.kendalltau(aligned_erag_scores, aligned_e2e_scores)
 
-                    local_corr[base_metric_name] = { # Store with base_metric_name for consistency
+                    local_corr[metric_name] = { # Store with base_metric_name for consistency
                         'spearman': spearman_corr,
                         'kendall': kendall_corr,
                         'num_queries_correlated': num_queries_with_metric
                     }
-                    print(f"\nFor metric {base_metric_name} (using key '{output_key_for_pytrec_eval}') ({method}, K={k}):")
+                    print(f"\nFor metric {metric_name} ({method}, K={k}):")
                     print(f"  Spearman correlation: {spearman_corr:.3f} (p={spearman_p:.3f})")
                     print(f"  Kendall correlation:   {kendall_corr:.3f} (p={kendall_p:.3f})")
-                    if num_queries_with_metric < len(test_queries_list):
-                        print(f"  (Note: Correlation calculated over {num_queries_with_metric}/{len(test_queries_list)} queries that had the metric '{output_key_for_pytrec_eval}')")
 
                 # Update checkpoint
                 if method not in checkpoint:
