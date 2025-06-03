@@ -205,7 +205,9 @@ def exact_match_metric(generated_outputs, expected_outputs):
 
 # Evaluation loop
 def evaluation(args):
-    test_expected_outputs, test_retrieval_results, t5_generator_for_eval, test_queries = model_loading()
+    test_expected_outputs, test_retrieval_results, t5_generator_for_eval, test_queries_set = model_loading()
+    # Use a sorted list of queries for consistent order in evaluations
+    test_queries_list = sorted(list(test_queries_set))
     # Create the log directory if it doesn't exist
     LOG_DIR = "../logs"
     if not os.path.exists(LOG_DIR):
@@ -271,38 +273,76 @@ def evaluation(args):
 
                 # Generate end-to-end responses
                 end_to_end_generated = t5_generator_for_eval(test_retrieval_results)
-                e2e_scores_dict = exact_match_metric(end_to_end_generated, test_expected_outputs)
+                # Ensure e2e_scores_dict covers all queries in test_queries_list, defaulting to 0 if a query somehow wasn't processed
+                e2e_scores_dict = {q: score for q, score in exact_match_metric(end_to_end_generated, test_expected_outputs).items()}
 
                 # Save end-to-end scores
                 e2e_file = os.path.join(LOG_DIR, f"end_to_end_{method}_K{k}.json")
                 with open(e2e_file, "w", encoding="utf-8") as f:
-                    json.dump(e2e_scores_dict, f, ensure_ascii=False, indent=2)
+                    # Save scores for all test queries, ensuring consistent structure
+                    scores_to_save = {q: e2e_scores_dict.get(q, 0) for q in test_queries_list}
+                    json.dump(scores_to_save, f, ensure_ascii=False, indent=2)
                 print(f"Saved end-to-end scores in {e2e_file}.")
 
                 # Compute correlation between retrieval and end-to-end scores
-                end_to_end_scores = [e2e_scores_dict.get(query, 0) for query in test_queries]
+                # This list will be aligned with test_queries_list
+                end_to_end_scores_list = [e2e_scores_dict.get(query, 0) for query in test_queries_list]
 
                 local_corr = {}
-                for metric_key in retrieval_metrics:
-                    eRAG_scores = [erag_results['per_input'][query].get(metric_key, None) for query in test_queries]
-                    eRAG_scores = [score for score in eRAG_scores if score is not None]
+                for base_metric_name in retrieval_metrics: # Iterate using the base names
+                    # Construct the actual key expected in pytrec_eval's output
+                    if base_metric_name == 'map':
+                        output_key_for_pytrec_eval = 'map'
+                    elif base_metric_name == 'recip_rank':
+                        output_key_for_pytrec_eval = 'recip_rank'
+                    elif base_metric_name == 'ndcg':
+                        output_key_for_pytrec_eval = f'ndcg_cut_{k}' 
+                    elif base_metric_name in ['P', 'recall', 'success']:
+                        output_key_for_pytrec_eval = f'{base_metric_name}_{k}'
+                    else:
+                        print(f"Warning: Unhandled base metric name '{base_metric_name}' for output key construction.")
+                        continue
 
-                    if len(eRAG_scores) != len(end_to_end_scores):
-                        print(f"Warning: dimension mismatch for {method}, metric {metric_key}, K={k}")
+                    aligned_erag_scores = []
+                    aligned_e2e_scores = []
+                    num_queries_with_metric = 0
 
-                    # Compute correlation if variance exists
-                    spearman_corr, spearman_p = stats.spearmanr(eRAG_scores, end_to_end_scores)
-                    kendall_corr, kendall_p = stats.kendalltau(eRAG_scores, end_to_end_scores)
-                    local_corr[metric_key] = {
+                    for idx, query_id in enumerate(test_queries_list):
+                        query_result_dict = erag_results['per_input'].get(query_id, {})
+                        erag_score = query_result_dict.get(output_key_for_pytrec_eval)
+
+                        if erag_score is not None:
+                            aligned_erag_scores.append(erag_score)
+                            aligned_e2e_scores.append(end_to_end_scores_list[idx])
+                            num_queries_with_metric += 1
+                        # else: erag_score is None, so we skip this query for this metric's correlation
+
+                    if num_queries_with_metric < 2:
+                        print(f"  Skipping correlation for {base_metric_name} (key {output_key_for_pytrec_eval}) for K={k}: fewer than 2 queries with this metric ({num_queries_with_metric} found).")
+                        spearman_corr, spearman_p = float('nan'), float('nan')
+                        kendall_corr, kendall_p = float('nan'), float('nan')
+                    elif len(set(aligned_erag_scores)) < 2 or len(set(aligned_e2e_scores)) < 2:
+                        print(f"  Skipping correlation for {base_metric_name} (key {output_key_for_pytrec_eval}) for K={k}: insufficient variance in scores ({num_queries_with_metric} pairs).")
+                        spearman_corr, spearman_p = float('nan'), float('nan')
+                        kendall_corr, kendall_p = float('nan'), float('nan')
+                    else:
+                        spearman_corr, spearman_p = stats.spearmanr(aligned_erag_scores, aligned_e2e_scores)
+                        kendall_corr, kendall_p = stats.kendalltau(aligned_erag_scores, aligned_e2e_scores)
+
+                    local_corr[base_metric_name] = { # Store with base_metric_name for consistency
                         'spearman': spearman_corr,
                         'kendall': kendall_corr,
-                        'num_queries': len(eRAG_scores)
+                        'num_queries_correlated': num_queries_with_metric
                     }
-                    print(f"\nFor metric {metric_key} ({method}, K={k}):")
+                    print(f"\nFor metric {base_metric_name} (using key '{output_key_for_pytrec_eval}') ({method}, K={k}):")
                     print(f"  Spearman correlation: {spearman_corr:.3f} (p={spearman_p:.3f})")
                     print(f"  Kendall correlation:   {kendall_corr:.3f} (p={kendall_p:.3f})")
+                    if num_queries_with_metric < len(test_queries_list):
+                        print(f"  (Note: Correlation calculated over {num_queries_with_metric}/{len(test_queries_list)} queries that had the metric '{output_key_for_pytrec_eval}')")
 
                 # Update checkpoint
+                if method not in checkpoint:
+                    checkpoint[method] = {}
                 checkpoint[method][k] = local_corr
                 with open(CHECKPOINT_FILE, "wb") as f:
                     pickle.dump(checkpoint, f)
