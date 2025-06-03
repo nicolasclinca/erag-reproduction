@@ -349,7 +349,14 @@ def evaluation(args):
                 print(f"Checkpoint updated for {method} with K={k}.")
 
             except Exception as e:
-                print(f"Error for {method} with K={k}: {e}")
+                print(f"Error for {method} with K={k}: {e}") # This prints str(e)
+                print(f"  Exception Type: {type(e)}")
+                print(f"  Exception Repr: {repr(e)}")
+                print(f"  Exception Args: {e.args}")
+                import traceback
+                print("--- Traceback ---")
+                traceback.print_exc()
+                print("--- End Traceback ---")
                 time.sleep(10)
                 continue
 
