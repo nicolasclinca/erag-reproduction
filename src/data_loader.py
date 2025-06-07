@@ -2,6 +2,7 @@ import json
 import torch
 from torch.utils.data import Dataset
 from retrieval_models import retrieve_documents
+import argparse
 
 
 # Load all expected outputs from the KILT NQ dev file
@@ -42,24 +43,26 @@ def augment_with_retrieved_documents(nq_dataset, retrieval_results):
     return augmented_data
 
 
-def augmented_dataset():
+def augmented_dataset(args):
     # Augment the NQ dataset with retrieved documents
     expected_outputs_train = {}
     retrieve_res_train = {}
-    expected_outputs_train, retrieve_res_train = retrieval_results(filename="../data/nq-train-kilt.jsonl")
+    filename_train = args.filename_train
+    expected_outputs_train, retrieve_res_train = retrieval_results(filename=filename_train)
     augmented_dataset_train = augment_with_retrieved_documents(expected_outputs_train, retrieve_res_train)
     
     expected_outputs_val= {}
     retrieve_res_val = {}
-    expected_outputs_val, retrieve_res_val = retrieval_results(filename="../data/nq-dev-kilt.jsonl")
+    filename_val = args.filename_val
+    expected_outputs_val, retrieve_res_val = retrieval_results(filename=filename_val)
     augmented_dataset_val = augment_with_retrieved_documents(expected_outputs_val, retrieve_res_val)
 
     # Save the augmented dataset to a new file for training
-    with open('../data/augmented_nq_train.json', 'w') as f:
+    with open('../data/augmented_train.json', 'w') as f:
         json.dump(augmented_dataset_train, f, indent=4)
     print(f"Augmented train dataset saved with {len(augmented_dataset_train)} samples.")
     
-    with open('../data/augmented_nq_dev.json', 'w') as f:
+    with open('../data/augmented_dev.json', 'w') as f:
         json.dump(augmented_dataset_val, f, indent=4)
     print(f"Augmented validationdataset saved with {len(augmented_dataset_val)} samples.")
 
@@ -170,7 +173,13 @@ class QA_Dataset_FiD(Dataset):
 
 if __name__=="__main__":
     try:
-        augmented_dataset()  
+        parser = argparse.ArgumentParser(description="Data Loading")
+        parser.add_argument("--filename_train", type=str, required=True, default="../data/nq-train-kilt.jsonl",
+                        help="Train file name")
+        parser.add_argument("--filename_val", type=str, required=True, default="../data/nq-dev-kilt.jsonl",
+                        help="Validation file name")
+        args = parser.parse_args()
+        augmented_dataset(args)  
         print("Dataset augmented and saved.")
     except:
         "Errore nella creazione del dataset aumentato."

@@ -14,9 +14,9 @@ import argparse
 
 def train(args):
 
-    with open("../data/augmented_nq_train.json", "r", encoding="utf-8") as f:
+    with open("../data/augmented_train.json", "r", encoding="utf-8") as f:
         train_data = json.load(f)
-    with open("../data/augmented_nq_dev.json", "r", encoding="utf-8") as f:
+    with open("../data/augmented_dev.json", "r", encoding="utf-8") as f:
         test_data = json.load(f)
         
     # Initialize the tokenizer

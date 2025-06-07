@@ -133,9 +133,9 @@ def T5_text_generator(
 
 
 #def model_loading(expected_outputs, retrieve_results, test_data):
-def model_loading():
+def model_loading(args):
     # Load the test data
-    filename = "../data/nq-dev-kilt.jsonl"
+    filename = args.filename
     expected_outputs, retrieve_results = retrieval_results(filename=filename)
     model_path = "../models/finetuned_t5_model_fid"
     max_input_len = 512
@@ -164,7 +164,7 @@ def model_loading():
         num_beams=num_beams_eval
     )
     
-    with open("../data/augmented_nq_dev.json", "r", encoding="utf-8") as f:
+    with open("../data/augmented_dev.json", "r", encoding="utf-8") as f:
         test_data = json.load(f)
         
     #Loading the Test set queries
@@ -246,14 +246,14 @@ def evaluation(args):
             try:
                 # Define retrieval metrics based on k
                 #retrieval_metrics = {'P', 'success', 'recall', 'map', 'ndcg', 'recip_rank'}
-                retrieval_metrics = {
+                retrieval_metrics = [
                     f'P_{k}',
                     f'success_{k}',
                     f'recall_{k}',
-                    f'map',
+                    'map',
                     f'ndcg_cut_{k}',
-                    f'recip_rank'
-                }
+                    'recip_rank'
+                ]
                 # Initialize ERAG
                 #erag = ERAG
 
@@ -291,6 +291,15 @@ def evaluation(args):
                     json.dump(scores_to_save, f, ensure_ascii=False, indent=2)
                 print(f"Saved end-to-end scores in {e2e_file}.")
 
+                # Compute the average end-to-end score
+                average_e2e_score = sum(e2e_scores_dict.values()) / len(e2e_scores_dict)
+                
+                # Save the aggregated average in a separate file
+                aggregated_e2e_file = os.path.join(LOG_DIR, f"aggregated_end_to_end_{method}_K{k}.json")
+                with open(aggregated_e2e_file, "w", encoding="utf-8") as f:
+                    json.dump({"average_score": average_e2e_score}, f, ensure_ascii=False, indent=2)
+                print(f"Saved aggregated end-to-end score in {aggregated_e2e_file}.")
+                
                 # Compute correlation between retrieval and end-to-end scores
                 # This list will be aligned with test_queries_list
                 end_to_end_scores_list = [e2e_scores_dict.get(query, 0) for query in test_queries_list]
@@ -337,6 +346,8 @@ def evaluation(args):
                 if method not in checkpoint:
                     checkpoint[method] = {}
                 checkpoint[method][k] = local_corr
+                # Update the correlations dictionary for the final printout
+                correlations[method][k] = local_corr
                 with open(CHECKPOINT_FILE, "wb") as f:
                     pickle.dump(checkpoint, f)
                 print(f"Checkpoint updated for {method} with K={k}.")
@@ -362,5 +373,7 @@ if __name__=="__main__":
     parser = argparse.ArgumentParser(description="Evaluation")
     parser.add_argument("--k_values", type=int, default=50,
                         help="Number of retireved document. Default is 50")
+    parser.add_argument("--filename", type=str, required=True, default="../data/nq-dev-kilt.jsonl",
+                        help="Validation file name")
     args = parser.parse_args()
     evaluation(args)
