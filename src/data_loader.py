@@ -24,7 +24,7 @@ def retrieval_results(filename):
     expected_outputs = load_all_nq_expected_outputs(filename)
 
     queries = list(expected_outputs.keys())
-    print(f"Loaded {len(queries)} queries from NQ")
+    print(f"Loaded {len(queries)} queries")
     
     # For each query, retireval_results[query] = [doc1, doc2, ..., doc50]
     retrieve_res = {query: retrieve_documents(query, method='BM25', k=50) for query in queries}
@@ -64,7 +64,7 @@ def augmented_dataset(args):
     
     with open('../data/augmented_dev.json', 'w') as f:
         json.dump(augmented_dataset_val, f, indent=4)
-    print(f"Augmented validationdataset saved with {len(augmented_dataset_val)} samples.")
+    print(f"Augmented validation dataset saved with {len(augmented_dataset_val)} samples.")
 
 
 # Custom Dataset class

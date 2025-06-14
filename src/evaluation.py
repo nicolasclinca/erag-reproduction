@@ -205,7 +205,7 @@ def exact_match_metric(generated_outputs, expected_outputs):
 
 # Evaluation loop
 def evaluation(args):
-    test_expected_outputs, test_retrieval_results, t5_generator_for_eval, test_queries_set = model_loading()
+    test_expected_outputs, test_retrieval_results, t5_generator_for_eval, test_queries_set = model_loading(args)
     # Use a sorted list of queries for consistent order in evaluations
     test_queries_list = sorted(list(test_queries_set))
     # Create the log directory if it doesn't exist
