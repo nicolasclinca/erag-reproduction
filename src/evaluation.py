@@ -247,11 +247,19 @@ def accuracy_metric(generated_outputs, expected_outputs):
     """
     return {query: 1 if any(normalize_answer(gen) == normalize_answer(gold) for gold in expected_outputs.get(query, [])) else 0 for query, gen in generated_outputs.items()}
 
-
+ # Create a dictionary to map metric names (strings) to their corresponding functions
+METRICS = {
+    "em": exact_match_metric,
+    "f1": f1_metric,
+    "accuracy": accuracy_metric
+}
 
 # Evaluation loop
 def evaluation(args):
     test_expected_outputs, test_retrieval_results, t5_generator_for_eval, test_queries_set = model_loading(args)
+    # Get the selected metric function from the dictionary based on the command-line argument
+    selected_metric_func = METRICS[args.metric]
+    print(f"\nUsing evaluation metric: {args.metric.upper()}")
     # Use a sorted list of queries for consistent order in evaluations
     test_queries_list = sorted(list(test_queries_set))
     # Create the log directory if it doesn't exist
@@ -308,7 +316,7 @@ def evaluation(args):
                     retrieval_results=test_retrieval_results,
                     expected_outputs=test_expected_outputs,
                     text_generator=t5_generator_for_eval,
-                    downstream_metric=exact_match_metric,
+                    downstream_metric=selected_metric_func,
                     retrieval_metrics=retrieval_metrics
                 )
 
@@ -327,7 +335,7 @@ def evaluation(args):
                 # Generate end-to-end responses
                 end_to_end_generated = t5_generator_for_eval(test_retrieval_results)
                 # Ensure e2e_scores_dict covers all queries in test_queries_list, defaulting to 0 if a query somehow wasn't processed
-                e2e_scores_dict = {q: score for q, score in exact_match_metric(end_to_end_generated, test_expected_outputs).items()}
+                e2e_scores_dict = {q: score for q, score in selected_metric_func(end_to_end_generated, test_expected_outputs).items()}
 
                 # Save end-to-end scores
                 e2e_file = os.path.join(LOG_DIR, f"end_to_end_{method}_K{k}.json")
@@ -421,5 +429,10 @@ if __name__=="__main__":
                         help="Number of retireved document. Default is 50")
     parser.add_argument("--filename", type=str, required=True, default="../data/nq-dev-kilt.jsonl",
                         help="Validation file name")
+    parser.add_argument("--metric",
+                        type=str,
+                        default="em",
+                        choices=METRICS.keys(),
+                        help=f"Evaluation metric to use. Choices: {list(METRICS.keys())}. Default is 'em' (exact_match).")
     args = parser.parse_args()
     evaluation(args)
