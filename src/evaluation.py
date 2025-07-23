@@ -298,16 +298,25 @@ def evaluation(args):
 
             print(f"\n--- Processing {method} with K = {k} ---")
             try:
-                # Define retrieval metrics based on k
-                #retrieval_metrics = {'P', 'success', 'recall', 'map', 'ndcg', 'recip_rank'}
-                retrieval_metrics = [
-                    f'P_{k}',
-                    f'success_{k}',
-                    f'recall_{k}',
-                    'map',
-                    f'ndcg_cut_{k}',
-                    'recip_rank'
-                ]
+                # Define retrieval metrics based on k and the chosen downstream metric
+                if args.metric == 'f1':
+                    retrieval_metrics = [
+                        f'P_{k}',      # Precision at K
+                        f'success_{k}' # Hit Ratio at K
+                    ]
+                    print(f"Using limited retrieval metrics for F1: {retrieval_metrics}")
+                else:
+                    # For 'em' or other metrics, use the full set
+                    retrieval_metrics = [
+                        f'P_{k}',
+                        f'success_{k}',
+                        f'recall_{k}',
+                        'map',
+                        f'ndcg_cut_{k}',
+                        'recip_rank'
+                    ]
+                    print(f"Using full retrieval metrics for {args.metric.upper()}: {retrieval_metrics}")
+
                 # Initialize ERAG
                 #erag = ERAG
 
