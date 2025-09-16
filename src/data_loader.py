@@ -3,6 +3,9 @@ import torch
 from torch.utils.data import Dataset
 from retrieval_models import retrieve_documents
 import argparse
+import os
+from typing import Dict, List, Tuple
+from contriever_retrieval import DenseRetriever
 
 
 # Load all expected outputs from the KILT NQ dev file
@@ -20,14 +23,43 @@ def load_all_nq_expected_outputs(filename):
     return expected
 
 
-def retrieval_results(filename):
+def retrieval_results(filename, method='BM25', k=50):
     expected_outputs = load_all_nq_expected_outputs(filename)
 
     queries = list(expected_outputs.keys())
     print(f"Loaded {len(queries)} queries")
-    
-    # For each query, retireval_results[query] = [doc1, doc2, ..., doc50]
-    retrieve_res = {query: retrieve_documents(query, method='BM25', k=50) for query in queries}
+    if method == 'BM25':
+        # For each query, retrieval_results[query] = [doc1, doc2, ..., doc50]
+        retrieve_res = {query: retrieve_documents(query, method=method, k=k) for query in queries}
+    elif method == 'Contriever':
+        index_path = "./index_out_full/ivfpq_opq_contriever.faiss"
+        collection_path = "../data/collection/wikipedia_passages.jsonl"
+        offsets_path = "./index_out_full/collection_offsets.u64.bin"
+        batch_size = 256
+        nprobe = 64
+
+        if not index_path or not collection_path:
+            raise ValueError(
+                "Imposta le variabili d'ambiente DENSE_INDEX_PATH e DENSE_COLLECTION_PATH "
+                "(opzionale: DENSE_OFFSETS_PATH) prima di chiamare retrieval_results()."
+            )
+
+        # Istanzia il retriever (usa offsets per accesso random veloce se disponibile)
+        retr = DenseRetriever(
+            index_path=index_path,
+            collection_path=collection_path,
+            offsets_path=offsets_path,
+            nprobe=nprobe,
+            in_memory=False,  # True solo per mini-run; full-scale: False
+        )
+
+        # Batch inference
+        retrieve_res: Dict[str, List[str]] = {}
+        for i in range(0, len(queries), batch_size):
+            batch_q = queries[i : i + batch_size]
+            results = retr.batch_dense_retrieve(batch_q, k=k, return_cosine=False)
+            for q, r in zip(batch_q, results):
+                retrieve_res[q] = r["documents"]
     return expected_outputs, retrieve_res
 
 
@@ -48,13 +80,14 @@ def augmented_dataset(args):
     expected_outputs_train = {}
     retrieve_res_train = {}
     filename_train = args.filename_train
-    expected_outputs_train, retrieve_res_train = retrieval_results(filename=filename_train)
+    method = args.method
+    expected_outputs_train, retrieve_res_train = retrieval_results(filename=filename_train, method=args.method)
     augmented_dataset_train = augment_with_retrieved_documents(expected_outputs_train, retrieve_res_train)
     
     expected_outputs_val= {}
     retrieve_res_val = {}
     filename_val = args.filename_val
-    expected_outputs_val, retrieve_res_val = retrieval_results(filename=filename_val)
+    expected_outputs_val, retrieve_res_val = retrieval_results(filename=filename_val, method=args.method)
     augmented_dataset_val = augment_with_retrieved_documents(expected_outputs_val, retrieve_res_val)
 
     # Save the augmented dataset to a new file for training
@@ -178,6 +211,8 @@ if __name__=="__main__":
                         help="Train file name")
         parser.add_argument("--filename_val", type=str, required=True, default="../data/nq-dev-kilt.jsonl",
                         help="Validation file name")
+        parser.add_argument("--method", type=str, required=True, default="BM25",
+                        help="Retrieval method")
         args = parser.parse_args()
         augmented_dataset(args)  
         print("Dataset augmented and saved.")
