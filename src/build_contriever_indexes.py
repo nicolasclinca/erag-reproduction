@@ -37,10 +37,16 @@ SEED = 42
 
 # Tuning (subset)
 TUNE_CANDIDATES: List[Tuple[int,int]] = [
-    (12, 8192), (16, 8192), (16, 4096),
-    (24, 8192), (24, 4096),
-    (32, 8192), (32, 4096),
-    (64, 4096), (64, 8192),
+    (64, 8192),
+    (80, 8192),
+    (96, 8192),
+    (112, 8192),
+    (128, 8192),
+    (80, 6144),
+    (96, 6144),
+    (112, 6144),
+    (128, 6144),
+    (64, 12288),
 ]
 TUNE_DOCS = 100_000  # modificabile via CLI
 
@@ -55,7 +61,7 @@ NBITS = 8
 NPROBE = 64
 
 # Training
-TRAIN_SIZE = 1_500_000
+TRAIN_SIZE = 3_000_000
 TRAIN_BLOCK_DOCS = 50_000
 
 # Add streaming
@@ -200,7 +206,7 @@ def autotune_bs_flush(encoder: ContrieverEncoder, input_jsonl: str, tune_docs: i
     ok_rows = [r for r in rows if r[2]]
     if not ok_rows:
         log("[tune] Nessuna combinazione valida. Uso fallback bs=12, flush=8192.")
-        return 12, 8192
+        return 64, 8192
     ok_rows.sort(key=lambda r: (r[0], -r[1]), reverse=True)  # max docs/s, poi min peak
     best_docs, best_peak, _, best_bs, best_fe = ok_rows[0]
     log(f"[tune] Best -> bs={best_bs}, flush={best_fe} | {best_docs:.1f} docs/s (peak {best_peak:.2f} GB)")
