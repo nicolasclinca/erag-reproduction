@@ -76,28 +76,47 @@ def augment_with_retrieved_documents(nq_dataset, retrieval_results):
 
 
 def augmented_dataset(args):
-    # Augment the NQ dataset with retrieved documents
-    expected_outputs_train = {}
-    retrieve_res_train = {}
-    filename_train = args.filename_train
-    method = args.method
-    expected_outputs_train, retrieve_res_train = retrieval_results(filename=filename_train, method=args.method)
-    augmented_dataset_train = augment_with_retrieved_documents(expected_outputs_train, retrieve_res_train)
-    
-    expected_outputs_val= {}
-    retrieve_res_val = {}
-    filename_val = args.filename_val
-    expected_outputs_val, retrieve_res_val = retrieval_results(filename=filename_val, method=args.method)
-    augmented_dataset_val = augment_with_retrieved_documents(expected_outputs_val, retrieve_res_val)
+    """
+    Process a list of datasets (args.datasets). For each path:
+      - call retrieval_results(filename=path, method=args.method)
+      - call augment_with_retrieved_documents(...)
+      - save the result in <same_dir>/<basename>-augmented.json
+    """
 
-    # Save the augmented dataset to a new file for training
-    with open('../data/augmented_train.json', 'w') as f:
-        json.dump(augmented_dataset_train, f, indent=4)
-    print(f"Augmented train dataset saved with {len(augmented_dataset_train)} samples.")
-    
-    with open('../data/augmented_dev.json', 'w') as f:
-        json.dump(augmented_dataset_val, f, indent=4)
-    print(f"Augmented validation dataset saved with {len(augmented_dataset_val)} samples.")
+    method = args.method
+    datasets = args.datasets or []
+
+    if not datasets:
+        print("No dataset provided in --datasets.")
+        return
+
+    for dataset_path in datasets:
+        if not dataset_path:
+            continue
+
+        if not os.path.exists(dataset_path):
+            print(f"File not found: '{dataset_path}'. Skipped.")
+            continue
+
+        try:
+            # Recupera i risultati di retrieval e costruisce l'augmented dataset
+            expected_outputs, retrieve_res = retrieval_results(filename=dataset_path, method=method)
+            augmented = augment_with_retrieved_documents(expected_outputs, retrieve_res)
+
+            # Costruisce il percorso di output
+            dirn = os.path.dirname(dataset_path) or "."
+            base = os.path.splitext(os.path.basename(dataset_path))[0]
+            out_path = os.path.join(dirn, f"{base}-augmented.json")
+
+            # Salva in JSON (utf-8)
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(augmented, f, indent=4)
+
+            print(f"Saved augmented dataset for '{dataset_path}' -> '{out_path}' ({len(augmented)} samples).")
+
+        except Exception as e:
+            # Non interrompiamo l'elaborazione degli altri dataset: segnaliamo l'errore e continuiamo
+            print(f"Error during the processing of '{dataset_path}': {e}")
 
 
 # Custom Dataset class
@@ -202,21 +221,30 @@ class QA_Dataset_FiD(Dataset):
             'attention_mask': batch_attention_masks,
             'labels': batch_labels
         }
-     
 
-if __name__=="__main__":
+
+if __name__ == "__main__":
     try:
-        parser = argparse.ArgumentParser(description="Data Loading")
-        parser.add_argument("--filename_train", type=str, required=True, default="../data/nq-train-kilt.jsonl",
-                        help="Train file name")
-        parser.add_argument("--filename_val", type=str, required=True, default="../data/nq-dev-kilt.jsonl",
-                        help="Validation file name")
-        parser.add_argument("--method", type=str, required=True, default="BM25",
-                        help="Retrieval method")
+        parser = argparse.ArgumentParser(description="Augment datasets with retrieved documents")
+        parser.add_argument(
+            "--datasets",
+            type=str,
+            nargs="+",
+            required=True,
+            help="List of paths to the datasets to process (separated by space)."
+        )
+        parser.add_argument(
+            "--method",
+            type=str,
+            required=True,
+            default="BM25",
+            help="Retrieval method"
+        )
         args = parser.parse_args()
-        augmented_dataset(args)  
-        print("Dataset augmented and saved.")
-    except:
-        "Errore nella creazione del dataset aumentato."
+        augmented_dataset(args)
+        print("Process completed.")
+    except Exception as e:
+        print(f"Error in creating the augmented dataset: {e}")
+
     
     
