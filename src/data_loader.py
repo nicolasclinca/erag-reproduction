@@ -23,26 +23,23 @@ def load_all_nq_expected_outputs(filename):
     return expected
 
 
-def retrieval_results(filename, method='BM25', k=50):
-    expected_outputs = load_all_nq_expected_outputs(filename)
-
-    queries = list(expected_outputs.keys())
-    print(f"Loaded {len(queries)} queries")
+def retrieval_results(queries, method='BM25', k=50):
     if method == 'BM25':
         # For each query, retrieval_results[query] = [doc1, doc2, ..., doc50]
         retrieve_res = {query: retrieve_documents(query, method=method, k=k) for query in queries}
     elif method == 'Contriever':
+        # Percorsi hardcoded (da gestire meglio con variabili d'ambiente o argomenti)
         index_path = "./index_out_full/ivfpq_opq_contriever.faiss"
         collection_path = "../data/collection/wikipedia_passages.jsonl"
         offsets_path = "./index_out_full/collection_offsets.u64.bin"
         batch_size = 256
         nprobe = 64
 
-        if not index_path or not collection_path:
-            raise ValueError(
-                "Imposta le variabili d'ambiente DENSE_INDEX_PATH e DENSE_COLLECTION_PATH "
-                "(opzionale: DENSE_OFFSETS_PATH) prima di chiamare retrieval_results()."
-            )
+        # if not index_path or not collection_path:
+        #     raise ValueError(
+        #         "Imposta le variabili d'ambiente DENSE_INDEX_PATH e DENSE_COLLECTION_PATH "
+        #         "(opzionale: DENSE_OFFSETS_PATH) prima di chiamare retrieval_results()."
+        #     )
 
         # Istanzia il retriever (usa offsets per accesso random veloce se disponibile)
         retr = DenseRetriever(
@@ -50,7 +47,7 @@ def retrieval_results(filename, method='BM25', k=50):
             collection_path=collection_path,
             offsets_path=offsets_path,
             nprobe=nprobe,
-            in_memory=False,  # True solo per mini-run; full-scale: False
+            in_memory=False,  # True only for mini-run; full-scale: False
         )
 
         # Batch inference
@@ -60,7 +57,7 @@ def retrieval_results(filename, method='BM25', k=50):
             results = retr.batch_dense_retrieve(batch_q, k=k, return_cosine=False)
             for q, r in zip(batch_q, results):
                 retrieve_res[q] = r["documents"]
-    return expected_outputs, retrieve_res
+    return retrieve_res
 
 
 # Add retrieved documents to the dataset
@@ -100,7 +97,10 @@ def augmented_dataset(args):
 
         try:
             # Recupera i risultati di retrieval e costruisce l'augmented dataset
-            expected_outputs, retrieve_res = retrieval_results(filename=dataset_path, method=method)
+            expected_outputs = load_all_nq_expected_outputs(filename=dataset_path)
+            queries = list(expected_outputs.keys())
+            print(f"Loaded {len(queries)} queries")
+            retrieve_res = retrieval_results(queries=queries, method=method)
             augmented = augment_with_retrieved_documents(expected_outputs, retrieve_res)
 
             # Costruisce il percorso di output

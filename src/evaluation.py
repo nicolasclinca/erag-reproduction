@@ -9,7 +9,7 @@ import scipy.stats as stats
 from functools import partial
 from transformers.modeling_outputs import BaseModelOutput
 from transformers import T5Tokenizer, T5ForConditionalGeneration
-from data_loader import retrieval_results
+from data_loader import retrieval_results, load_all_nq_expected_outputs
 from collections import Counter
 import argparse
 
@@ -137,7 +137,11 @@ def T5_text_generator(
 def model_loading(args):
     # Load the test data
     filename = args.filename
-    expected_outputs, retrieve_results = retrieval_results(filename=filename)
+    expected_outputs = load_all_nq_expected_outputs(filename)
+    retrieve_results = retrieval_results(queries=list(expected_outputs.keys()) , method=args.method, k=args.doc_n)
+    
+    torch.cuda.empty_cache()
+    
     model_path = "../models/finetuned_t5_model_fid"
     max_input_len = 512
     max_output_len = 128
@@ -283,7 +287,7 @@ def evaluation(args):
 
 
     # Define values for K (number of retrieved documents) and retrieval methods
-    k_values = [args.k_values]
+    k_values = args.k_values
     retriever_methods = ['BM25'] # , 'dense'
 
     # Load existing correlations from checkpoint
@@ -434,8 +438,12 @@ def evaluation(args):
 
 if __name__=="__main__":
     parser = argparse.ArgumentParser(description="Evaluation")
-    parser.add_argument("--k_values", type=int, default=50,
-                        help="Number of retireved document. Default is 50")
+    parser.add_argument("--k_values", type=int, nargs="+", required=True, default=[50],
+                        help="List of cut values to use for metrics computation.")
+    parser.add_argument("--method", type=str, default="BM25", choices=["BM25", "Contriever"],
+                        help="Retrieval method to use. Default is 'BM25'.")
+    parser.add_argument("--doc_n", type=int, default=50,
+                        help="Number of retrieved documents to use. Default is 50.")
     parser.add_argument("--filename", type=str, required=True, default="../data/nq-dev-kilt.jsonl",
                         help="Validation file name")
     parser.add_argument("--metric",
