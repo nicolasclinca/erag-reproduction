@@ -169,7 +169,8 @@ def model_loading(args):
         num_beams=num_beams_eval
     )
     
-    with open("../data/augmented_dev.json", "r", encoding="utf-8") as f:
+    # with open("../data/augmented_dev.json", "r", encoding="utf-8") as f:
+    with open(args.filename, "r", encoding="utf-8") as f:
         test_data = json.load(f)
         
     #Loading the Test set queries
@@ -288,7 +289,7 @@ def evaluation(args):
 
     # Define values for K (number of retrieved documents) and retrieval methods
     k_values = args.k_values
-    retriever_methods = ['BM25'] # , 'dense'
+    retriever_methods = [args.method]
 
     # Load existing correlations from checkpoint
     correlations = {method: checkpoint.get(method, {}) for method in retriever_methods}

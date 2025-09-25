@@ -8,6 +8,11 @@ from typing import Dict, List, Tuple
 from contriever_retrieval import DenseRetriever
 
 
+"""
+Uso CLI:
+    python data_loader.py --datasets ../data/nq-train-kilt.jsonl ../data/nq-dev-kilt.jsonl ../data/fever-train-kilt.jsonl ../data/fever-dev-kilt.jsonl ../data/hotpotqa-train-kilt.jsonl ../data/hotpotqa-dev-kilt.jsonl ../data/triviaqa-train-kilt.jsonl ../data/triviaqa-dev-kilt.jsonl ../data/wow-train-kilt.jsonl ../data/wow-dev-kilt.jsonl --method Contriever
+"""
+
 # Load all expected outputs from the KILT NQ dev file
 def load_all_nq_expected_outputs(filename):
     """Loads all queries and their gold answers from the KILT NQ dev file.
