@@ -169,8 +169,7 @@ def model_loading(args):
         num_beams=num_beams_eval
     )
     
-    # with open("../data/augmented_dev.json", "r", encoding="utf-8") as f:
-    with open(args.filename, "r", encoding="utf-8") as f:
+    with open("../data/nq-dev-kilt-augmented.json", "r", encoding="utf-8") as f:
         test_data = json.load(f)
         
     #Loading the Test set queries
