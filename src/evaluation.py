@@ -169,7 +169,7 @@ def model_loading(args):
         num_beams=num_beams_eval
     )
     
-    with open("../data/nq-dev-kilt-augmented.json", "r", encoding="utf-8") as f:
+    with open(args.filename_augmented, "r", encoding="utf-8") as f:
         test_data = json.load(f)
         
     #Loading the Test set queries
@@ -446,6 +446,8 @@ if __name__=="__main__":
                         help="Number of retrieved documents to use. Default is 50.")
     parser.add_argument("--filename", type=str, required=True, default="../data/nq-dev-kilt.jsonl",
                         help="Validation file name")
+    parser.add_argument("--filename_augmented", type=str, required=True, default="../data/nq-dev-kilt.jsonl",
+                        help="Validation file name augmented with documents")
     parser.add_argument("--metric",
                         type=str,
                         default="em",
