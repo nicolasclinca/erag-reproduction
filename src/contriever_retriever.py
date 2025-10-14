@@ -1,5 +1,5 @@
 """
-retrieval.py
+contriever_retriever.py
 Dense retrieval su collezione JSONL preprocessata (id, contents) + indice FAISS OPQ+IVF-PQ.
 Supporto offsets binari per random access (consigliato).
 

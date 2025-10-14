@@ -1,5 +1,5 @@
 """
-build_indexes.py
+build_contriever_indexes.py
 Costruisce un indice OPQ+IVF-PQ (Contriever) partendo da una collezione preprocessata JSONL
 (id, contents). Include un tuning iniziale di (batch_size, flush_every) su un subset di 
 documenti, quindi prosegue automaticamente con la combinazione migliore.

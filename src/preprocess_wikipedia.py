@@ -43,54 +43,6 @@ def process_kilt_page(page_json, max_words=100):
     return docs
 
 
-def process_source(in_path, out_path, args, buffer_size=2_000_000):
-    """
-    Process an entire dataset from an Internet source
-    :param in_path: link to the dataset
-    :param out_path: path to the output file
-    :param buffer_size: size of the buffer to speed up the procedure (default: 2 Millions)
-    :param max_records: limit to the number of records to be processed; if 0 (default value), there is no limit
-    :return: number of processed records
-    """
-    max_records = args.max_record
-    with (open(in_path, 'r', encoding='utf-8') as in_file,
-          open(out_path, 'w', encoding='utf-8') as out_file):
-
-        buffer = []
-        for i, line in enumerate(in_file):
-            if i >= max_records != 0:
-                print("Limit reached")
-                break
-            try:
-                page = json.loads(line)
-            except json.JSONDecodeError as e:
-                print(f"Error decoding record {i}: {e}")
-                continue  
-
-            docs = process_kilt_page(page, max_words=100)
-            buffer.extend(docs)
-
-            if len(buffer) >= buffer_size:
-                for doc in buffer:                   
-                    # Save each document as JSON Lines
-                    json.dump(doc, out_file)
-                    out_file.write("\n")
-                buffer = []
-                print(f"\n+++ Buffer emptied: {i} record processed +++\n")
-
-        for doc in buffer:
-            json.dump(doc, out_file)
-            out_file.write("\n")
-        
-
-        if max_records == 0:
-            print("Preprocessing done: all record processed")
-            return "all"
-        else:
-            print("Preprocessing done: " + str(max_records) + " records processed")
-            return str(max_records)
-
-
 def process_source_request(url, out_path, args, buffer_size=2_000_000):
     """
     Process an entire dataset from an Internet source
@@ -152,6 +104,6 @@ if __name__=="__main__":
     output_path = '../data/collection/wikipedia_passages.jsonl'
     parser = argparse.ArgumentParser(description="Preprocess Wikipedia Dump")
     parser.add_argument("--max_record", type=int, default=0,
-                        help="Number of record taken from thw Wikipedia Dump (for smaller wikipedia dump). Default is 0 (no limit).")
+                        help="Number of record taken from the Wikipedia Dump (for smaller wikipedia dump). Default is 0 (no limit).")
     args = parser.parse_args()
     process_source_request(url, output_path, args)

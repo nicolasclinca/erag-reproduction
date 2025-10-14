@@ -1,11 +1,9 @@
 import json
-import torch
-from torch.utils.data import Dataset
-from retrieval_models import retrieve_documents
+from src.bm25_retriever import bm25_retrieve
 import argparse
 import os
 from typing import Dict, List, Tuple
-from contriever_retrieval import DenseRetriever
+from src.contriever_retriever import DenseRetriever
 
 
 """
@@ -13,9 +11,9 @@ Uso CLI:
     python data_loader.py --datasets ../data/nq-train-kilt.jsonl ../data/nq-dev-kilt.jsonl ../data/fever-train-kilt.jsonl ../data/fever-dev-kilt.jsonl ../data/hotpotqa-train-kilt.jsonl ../data/hotpotqa-dev-kilt.jsonl ../data/triviaqa-train-kilt.jsonl ../data/triviaqa-dev-kilt.jsonl ../data/wow-train-kilt.jsonl ../data/wow-dev-kilt.jsonl --method Contriever
 """
 
-# Load all expected outputs from the KILT NQ dev file
-def load_all_nq_expected_outputs(filename):
-    """Loads all queries and their gold answers from the KILT NQ dev file.
+# Load all expected outputs from the KILT file
+def load_expected_outputs(filename):
+    """Loads all queries and their gold answers from the KILT file.
     Returns a dict {query: [gold_answer1, gold_answer2, ...]}."""
     expected = {}
     with open(filename, "r", encoding="utf-8") as f:
@@ -31,7 +29,7 @@ def load_all_nq_expected_outputs(filename):
 def retrieval_results(queries, method='BM25', k=50):
     if method == 'BM25':
         # For each query, retrieval_results[query] = [doc1, doc2, ..., doc50]
-        retrieve_res = {query: retrieve_documents(query, method=method, k=k) for query in queries}
+        retrieve_res = {query: bm25_retrieve(query, k=k) for query in queries}
     elif method == 'Contriever':
         # Percorsi hardcoded (da gestire meglio con variabili d'ambiente o argomenti)
         index_path = "./index_out_full/ivfpq_opq_contriever.faiss"
@@ -41,10 +39,7 @@ def retrieval_results(queries, method='BM25', k=50):
         nprobe = 64
 
         # if not index_path or not collection_path:
-        #     raise ValueError(
-        #         "Imposta le variabili d'ambiente DENSE_INDEX_PATH e DENSE_COLLECTION_PATH "
-        #         "(opzionale: DENSE_OFFSETS_PATH) prima di chiamare retrieval_results()."
-        #     )
+        #     raise ValueError()
 
         # Istanzia il retriever (usa offsets per accesso random veloce se disponibile)
         retr = DenseRetriever(
@@ -77,7 +72,7 @@ def augment_with_retrieved_documents(nq_dataset, retrieval_results):
     return augmented_data
 
 
-def augmented_dataset(args):
+def augment_datasets(args):
     """
     Process a list of datasets (args.datasets). For each path:
       - call retrieval_results(filename=path, method=args.method)
@@ -102,7 +97,7 @@ def augmented_dataset(args):
 
         try:
             # Recupera i risultati di retrieval e costruisce l'augmented dataset
-            expected_outputs = load_all_nq_expected_outputs(filename=dataset_path)
+            expected_outputs = load_expected_outputs(filename=dataset_path)
             queries = list(expected_outputs.keys())
             print(f"Loaded {len(queries)} queries")
             retrieve_res = retrieval_results(queries=queries, method=method)
@@ -124,110 +119,6 @@ def augmented_dataset(args):
             print(f"Error during the processing of '{dataset_path}': {e}")
 
 
-# Custom Dataset class
-class QA_Dataset_FiD(Dataset):
-    def __init__(self, augmented_data, tokenizer, max_input_length=512, max_target_length=128):
-        self.data = augmented_data
-        self.tokenizer = tokenizer
-        self.max_input_length = max_input_length
-        self.max_target_length = max_target_length
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        item = self.data[idx]
-        query = item["query"]
-        gold_answer = item["gold_answer"]
-        retrieved_docs = item["retrieved_docs"]
-
-        input_encodings = []
-        # retrieved_docs = retrieved_docs[:50]
-
-        for doc in retrieved_docs:
-            input_text = f"question: {query} context: {doc}"
-            input_encoding = self.tokenizer(input_text, truncation=True, max_length=self.max_input_length)
-            input_encodings.append(input_encoding)
-
-        target_text = gold_answer
-        target_encoding = self.tokenizer(target_text, truncation=True, max_length=self.max_target_length)
-
-        return {
-            'input_ids_list': [enc['input_ids'] for enc in input_encodings],
-            'attention_mask_list': [enc['attention_mask'] for enc in input_encodings],
-            'labels': target_encoding['input_ids']
-        }
-    
-    
-    
-    def collate_fn_fid(batch, tokenizer, max_docs_per_item=10, max_input_length=512, max_target_length=128):
-        
-        actual_max_docs_in_batch = max(len(item['input_ids_list']) for item in batch) if batch else 0
-        max_docs_this_batch = min(actual_max_docs_in_batch, max_docs_per_item)
-
-        max_len_input = max_input_length
-        max_len_target = max_target_length
-
-        all_input_ids = []
-        all_attention_masks = []
-        all_labels = []
-
-        pad_token_id = tokenizer.pad_token_id
-        label_pad_token_id = -100
-
-        for item in batch:
-            item_input_ids = []
-            item_attention_masks = []
-
-            # Process up to max_docs_this_batch, handling items with fewer docs
-            num_docs_to_process = min(len(item['input_ids_list']), max_docs_this_batch)
-
-            # Pad up to max_docs_per_item for consistent tensor shapes across batches
-            for i in range(max_docs_per_item):
-                if i < num_docs_to_process:
-                    input_ids = item['input_ids_list'][i][:max_len_input]
-                    attention_mask = item['attention_mask_list'][i][:max_len_input]
-
-                    padding_length = max_len_input - len(input_ids)
-                    input_ids = input_ids + ([pad_token_id] * padding_length)
-                    attention_mask = attention_mask + ([0] * padding_length)
-                else:
-                    # Pad with empty docs if item has < max_docs_per_item
-                    input_ids = [pad_token_id] * max_len_input
-                    attention_mask = [0] * max_len_input
-
-                item_input_ids.append(torch.tensor(input_ids, dtype=torch.long))
-                item_attention_masks.append(torch.tensor(attention_mask, dtype=torch.long))
-
-            if len(item_input_ids) != max_docs_per_item:
-                print(f"Warning: Mismatch in expected docs {max_docs_per_item} vs actual {len(item_input_ids)}")
-
-            all_input_ids.append(torch.stack(item_input_ids))
-            all_attention_masks.append(torch.stack(item_attention_masks))
-
-            labels = item['labels'][:max_len_target]
-            label_padding_length = max_len_target - len(labels)
-            padded_labels = labels + ([label_pad_token_id] * label_padding_length)
-            all_labels.append(torch.tensor(padded_labels, dtype=torch.long))
-
-        if not all_input_ids:
-            return {
-                'input_ids': torch.empty(0, max_docs_per_item, max_len_input, dtype=torch.long),
-                'attention_mask': torch.empty(0, max_docs_per_item, max_len_input, dtype=torch.long),
-                'labels': torch.empty(0, max_len_target, dtype=torch.long)
-            }
-
-        batch_input_ids = torch.stack(all_input_ids)
-        batch_attention_masks = torch.stack(all_attention_masks)
-        batch_labels = torch.stack(all_labels)
-
-        return {
-            'input_ids': batch_input_ids,
-            'attention_mask': batch_attention_masks,
-            'labels': batch_labels
-        }
-
-
 if __name__ == "__main__":
     try:
         parser = argparse.ArgumentParser(description="Augment datasets with retrieved documents")
@@ -243,10 +134,10 @@ if __name__ == "__main__":
             type=str,
             required=True,
             default="BM25",
-            help="Retrieval method"
+            help="Retrieval method (BM25 or Contriever)"
         )
         args = parser.parse_args()
-        augmented_dataset(args)
+        augment_datasets(args)
         print("Process completed.")
     except Exception as e:
         print(f"Error in creating the augmented dataset: {e}")
