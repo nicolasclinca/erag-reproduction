@@ -456,7 +456,7 @@ def t5_fid_generator(
         out_text = tokenizer.decode(gen_ids[0], skip_special_tokens=True).strip()
         results[query] = out_text
 
-        if i % 10 == 0:
+        if i % 100 == 0:
             print(f"  Generated {i}/{len(queries_and_documents)}...")
 
     print(f"Done. Time: {time.time() - t0:.2f}s")

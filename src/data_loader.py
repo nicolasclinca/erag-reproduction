@@ -32,12 +32,7 @@ def retrieval_results(queries, method='BM25', k=50, retriever=None, batch_size=2
     if method == 'BM25':
         return {query: bm25_retrieve(query, k=k) for query in queries}
     elif method == 'Contriever':
-        return contriever_batch_retrieve(
-            queries=queries,
-            k=k,
-            batch_size=batch_size,
-            retriever=retriever,
-        )
+        return retriever.contriever_batch_retrieve(queries=queries, k=k, batch_size=batch_size)
     else:
         raise ValueError(f"Unknown method: {method}")
 
@@ -86,7 +81,6 @@ def augment_datasets(args):
             collection_path=collection_path,
             offsets_path=offsets_path,
             nprobe=nprobe,
-            in_memory=False,
         )
 
     # Parametri (esponibili a CLI in futuro)

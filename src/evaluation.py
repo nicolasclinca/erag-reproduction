@@ -30,7 +30,6 @@ def model_loading(args):
             collection_path=collection_path,
             offsets_path=offsets_path,
             nprobe=nprobe,
-            in_memory=False,
         )
 
     print(f"Retrieving documents using: {args.method}")
