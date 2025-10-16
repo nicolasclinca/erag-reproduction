@@ -10,14 +10,33 @@ from data_loader import retrieval_results, load_expected_outputs
 from collections import Counter
 import argparse
 from fid_t5 import t5_fid_generator
+from src.contriever_retriever import DenseRetriever
 
 
 def model_loading(args):
     # Load the test data
     expected_outputs = load_expected_outputs(args.test_dataset_path)
     test_queries = list(expected_outputs.keys())
-    retrieve_results = retrieval_results(test_queries, method=args.method, k=args.doc_n)
-    
+
+    retriever = None
+    if args.method == 'Contriever':
+        index_path = "./index_out_full/ivfpq_opq_contriever.faiss"
+        collection_path = "../data/collection/wikipedia_passages.jsonl"
+        offsets_path = "./index_out_full/collection_offsets.u64.bin"
+        nprobe = 64
+
+        retriever = DenseRetriever(
+            index_path=index_path,
+            collection_path=collection_path,
+            offsets_path=offsets_path,
+            nprobe=nprobe,
+            in_memory=False,
+        )
+
+    print(f"Retrieving documents using: {args.method}")
+    retrieve_results = retrieval_results(test_queries, method=args.method, k=args.doc_n, retriever=retriever)
+    print(f"Documents retrieved.")
+
     torch.cuda.empty_cache()
     
     model_path = args.model_path
@@ -187,7 +206,6 @@ def evaluation(args):
     # This list will be aligned with test_queries_list
     end_to_end_scores_list = [e2e_scores_dict.get(query, 0) for query in test_queries_list]
 
-    local_corr = {}
     for metric_name in retrieval_metrics: # Iterate using the base names
         
         aligned_erag_scores = []
@@ -215,12 +233,6 @@ def evaluation(args):
         else:
             spearman_corr, spearman_p = stats.spearmanr(aligned_erag_scores, aligned_e2e_scores)
             kendall_corr, kendall_p = stats.kendalltau(aligned_erag_scores, aligned_e2e_scores)
-
-        local_corr[metric_name] = { # Store with base_metric_name for consistency
-            'spearman': spearman_corr,
-            'kendall': kendall_corr,
-            'num_queries_correlated': num_queries_with_metric
-        }
 
         print(f"\nFor metric {metric_name} ({method}, doc_n={doc_n}):")
         print(f"  Spearman correlation: {spearman_corr:.3f} (p={spearman_p:.3f})")

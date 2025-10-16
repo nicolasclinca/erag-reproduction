@@ -156,6 +156,44 @@ class DenseRetriever:
                 obj["cosine_sim"] = [1.0 - 0.5 * d for d in dists]
             results.append(obj)
         return results
+    
+
+def contriever_batch_retrieve(
+    queries: List[str],
+    k: int = 50,
+    batch_size: int = 256,
+    index_path: Optional[str] = None,
+    collection_path: Optional[str] = None,
+    offsets_path: Optional[str] = None,
+    nprobe: Optional[int] = 64,
+    in_memory: bool = False,
+    return_cosine: bool = False,
+    retriever: Optional[DenseRetriever] = None,
+) -> Dict[str, List[str]]:
+    """
+    Restituisce {query: [doc1, doc2, ..., dock]} usando Contriever in batch.
+    - Se 'retriever' è fornito, viene riutilizzato (consigliato per più chiamate).
+    - Altrimenti istanzia un DenseRetriever usando i path forniti.
+    """
+    if retriever is None:
+        if not index_path or not collection_path:
+            raise ValueError("index_path e collection_path sono richiesti se 'retriever' è None.")
+        retriever = DenseRetriever(
+            index_path=index_path,
+            collection_path=collection_path,
+            offsets_path=offsets_path,
+            nprobe=nprobe,
+            in_memory=in_memory,
+        )
+
+    out: Dict[str, List[str]] = {}
+    for i in range(0, len(queries), batch_size):
+        batch_q = queries[i : i + batch_size]
+        results = retriever.batch_dense_retrieve(batch_q, k=k, return_cosine=return_cosine)
+        for q, r in zip(batch_q, results):
+            out[q] = r["documents"]
+    return out
+
 
 # --------- CLI ---------
 def main():
