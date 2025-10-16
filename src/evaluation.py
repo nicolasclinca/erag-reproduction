@@ -40,14 +40,14 @@ def model_loading(args):
 
     torch.cuda.empty_cache()
     
-    model_path = args.model_path
+    model_dir = args.model_dir
     max_input_len = 256
     max_output_len = 64
     num_beams_eval = 4
 
-    print(f"Loading model from: {model_path}")
-    model = T5ForConditionalGeneration.from_pretrained(model_path)
-    tokenizer = T5Tokenizer.from_pretrained(model_path)
+    print(f"Loading model from: {model_dir}")
+    model = T5ForConditionalGeneration.from_pretrained(model_dir)
+    tokenizer = T5Tokenizer.from_pretrained(model_dir)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
     model.eval()
@@ -131,24 +131,134 @@ def save_json_log(data, file_path, description=None):
         print(f"Salvato in {file_path}.")
 
 
-def evaluation(args):
-    test_expected_outputs, test_retrieval_results, t5_generator_for_eval, test_queries_set = model_loading(args)
-    selected_metric_func = METRICS[args.metric]
-    print(f"\nUsing evaluation metric: {args.metric.upper()}")
-
-    # Use a sorted list of queries for consistent order in evaluations
-    test_queries_list = sorted(list(test_queries_set))
-
-    LOG_DIR = "../logs"
-    os.makedirs(LOG_DIR, exist_ok=True)
-
-    doc_n = args.doc_n
-    k_values = args.k_values
+def evaluation_erag(
+    args,
+    expected_outputs,
+    retrieval_results_dict,
+    t5_generator_for_eval,
+    downstream_metric_func,
+    retrieval_metrics,
+    log_dir="../logs",
+):
     method = args.method
 
-    print(f"\n--- Processing {method} with doc_n = {doc_n} ---")
+    print(f"\nEvaluating using eRAG...")
 
-    # Define retrieval metrics based on k and the chosen downstream metric
+    # Valutazione RAG (retrieval + generazione)
+    erag_results = erag.eval(
+        retrieval_results=retrieval_results_dict,
+        expected_outputs=expected_outputs,
+        text_generator=t5_generator_for_eval,
+        downstream_metric=downstream_metric_func,
+        retrieval_metrics=retrieval_metrics
+    )
+
+    # Salvataggi
+    per_input_file = os.path.join(log_dir, f"per_input_{method}.json")
+    save_json_log(erag_results['per_input'], per_input_file, "Risultati per-input")
+
+    aggregated_file = os.path.join(log_dir, f"aggregated_{method}.json")
+    save_json_log(erag_results['aggregated'], aggregated_file, "Risultati aggregati")
+
+    return erag_results
+
+
+def evaluation_e2e(
+    args,
+    expected_outputs,
+    retrieval_results_dict,
+    t5_generator_for_eval,
+    downstream_metric_func,
+    test_queries_list,
+    log_dir="../logs",
+):
+    method = args.method
+    doc_n = args.doc_n
+
+    # Generazione end-to-end e punteggi
+    end_to_end_generated = t5_generator_for_eval(retrieval_results_dict)
+    e2e_scores_dict = downstream_metric_func(end_to_end_generated, expected_outputs)
+
+    # Garantisce che tutte le query siano presenti
+    e2e_scores_dict = {q: e2e_scores_dict.get(q, 0) for q in test_queries_list}
+
+    # Media
+    average_e2e_score = (sum(e2e_scores_dict.values()) / len(e2e_scores_dict)) if e2e_scores_dict else 0.0
+
+    # Salva media e punteggi nello stesso file (media in cima)
+    e2e_file = os.path.join(log_dir, f"end_to_end_{method}_doc_n{doc_n}.json")
+    e2e_to_save = {"average_score": average_e2e_score}
+    e2e_to_save.update(e2e_scores_dict)
+    save_json_log(e2e_to_save, e2e_file, "Punteggi end-to-end")
+
+    return e2e_scores_dict, average_e2e_score
+
+
+def get_correlations(
+    erag_results,
+    retrieval_metrics,
+    e2e_scores_dict,
+    test_queries_list,
+    method,
+    doc_n,
+    log_dir="../logs",
+):
+    correlations = {}
+
+    for metric_name in retrieval_metrics:
+        aligned_erag_scores = []
+        aligned_e2e_scores = []
+
+        for query_id in test_queries_list:
+            query_result_dict = erag_results['per_input'].get(query_id, {})
+            erag_score = query_result_dict.get(metric_name)
+            if erag_score is not None:
+                aligned_erag_scores.append(erag_score)
+                aligned_e2e_scores.append(e2e_scores_dict.get(query_id, 0))
+
+        corr_entry = {
+            "num_pairs": len(aligned_erag_scores),
+            "spearman_corr": None,
+            "spearman_p": None,
+            "kendall_corr": None,
+            "kendall_p": None,
+        }
+
+        # Calcolo correlazioni solo se ci sono abbastanza coppie e non sono costanti
+        can_corr = (
+            len(aligned_erag_scores) >= 2 and
+            len(set(aligned_erag_scores)) > 1 and
+            len(set(aligned_e2e_scores)) > 1
+        )
+
+        if can_corr:
+            spearman_corr, spearman_p = stats.spearmanr(aligned_erag_scores, aligned_e2e_scores)
+            kendall_corr, kendall_p = stats.kendalltau(aligned_erag_scores, aligned_e2e_scores)
+            corr_entry.update({
+                "spearman_corr": float(spearman_corr),
+                "spearman_p": float(spearman_p),
+                "kendall_corr": float(kendall_corr),
+                "kendall_p": float(kendall_p),
+            })
+
+            print(f"\nFor metric {metric_name} ({method}, doc_n={doc_n}):")
+            print(f"  Spearman correlation: {spearman_corr:.3f} (p={spearman_p:.3f})")
+            print(f"  Kendall correlation:   {kendall_corr:.3f} (p={kendall_p:.3f})")
+        else:
+            print(f"\nFor metric {metric_name} ({method}, doc_n={doc_n}):")
+            print("  Spearman correlation: N/A (dati insufficienti o costanti)")
+            print("  Kendall correlation:  N/A (dati insufficienti o costanti)")
+
+        correlations[metric_name] = corr_entry
+
+    corr_file = os.path.join(log_dir, f"correlations_{method}_doc_n{doc_n}.json")
+    save_json_log(correlations, corr_file, "Correlazioni retrieval vs end-to-end")
+    return correlations
+
+
+def define_retrieval_metrics(args):
+    doc_n = args.doc_n
+    k_values = args.k_values
     retrieval_metrics = []
     for k in k_values:
         if k > doc_n:
@@ -156,81 +266,64 @@ def evaluation(args):
         retrieval_metrics.extend([f'P_{k}', f'success_{k}'])
         if args.metric != 'f1':
             retrieval_metrics.extend([f'recall_{k}', f'ndcg_cut_{k}'])
-
     if args.metric != 'f1':
         retrieval_metrics.extend(['map', 'recip_rank'])
+    return retrieval_metrics
 
-    # Evaluate retrieval and generation
-    erag_results = erag.eval(
-        retrieval_results=test_retrieval_results,
+
+def full_evaluation(args):
+    LOG_DIR = "../logs"
+    os.makedirs(LOG_DIR, exist_ok=True)
+    
+    # Definizione metriche
+    retrieval_metrics = define_retrieval_metrics(args)
+    selected_metric_func = METRICS[args.metric]
+    print(f"\nUsing evaluation metric: {args.metric.upper()}")
+
+    # 1) Caricamento modello e dati
+    test_expected_outputs, test_retrieval_results, t5_generator_for_eval, test_queries_set = model_loading(args)
+    test_queries_list = sorted(list(test_queries_set))
+
+    # 2) Valutazione eRAG
+    erag_results = evaluation_erag(
+        args=args,
         expected_outputs=test_expected_outputs,
-        text_generator=t5_generator_for_eval,
-        downstream_metric=selected_metric_func,
-        retrieval_metrics=retrieval_metrics
+        retrieval_results_dict=test_retrieval_results,
+        t5_generator_for_eval=t5_generator_for_eval,
+        downstream_metric_func=selected_metric_func,
+        retrieval_metrics=retrieval_metrics,
+        log_dir=LOG_DIR
     )
 
-    # Salvataggi semplificati con funzione helper
-    per_input_file = os.path.join(LOG_DIR, f"per_input_{method}_doc_n{doc_n}.json")
-    save_json_log(erag_results['per_input'], per_input_file, "Risultati per-input")
+    # 3) Valutazione end-to-end
+    e2e_scores_dict, average_e2e_score = evaluation_e2e(
+        args=args,
+        expected_outputs=test_expected_outputs,
+        retrieval_results_dict=test_retrieval_results,
+        t5_generator_for_eval=t5_generator_for_eval,
+        downstream_metric_func=selected_metric_func,
+        test_queries_list=test_queries_list,
+        log_dir=LOG_DIR
+    )
 
-    aggregated_file = os.path.join(LOG_DIR, f"aggregated_{method}_doc_n{doc_n}.json")
-    save_json_log(erag_results['aggregated'], aggregated_file, "Risultati aggregati")
+    # 4) Correlazioni tra metriche eRAG e punteggi end-to-end
+    correlations = get_correlations(
+        erag_results=erag_results,
+        retrieval_metrics=retrieval_metrics,
+        e2e_scores_dict=e2e_scores_dict,
+        test_queries_list=test_queries_list,
+        method=args.method,
+        doc_n=args.doc_n,
+        log_dir=LOG_DIR
+    )
 
-    # Generate end-to-end responses e calcolo punteggi
-    end_to_end_generated = t5_generator_for_eval(test_retrieval_results)
-    e2e_scores_dict = selected_metric_func(end_to_end_generated, test_expected_outputs)
-    # Garantisce che tutte le query siano presenti
-    e2e_scores_dict = {q: e2e_scores_dict.get(q, 0) for q in test_queries_list}
-
-    # Media e2e
-    average_e2e_score = (sum(e2e_scores_dict.values()) / len(e2e_scores_dict)) if e2e_scores_dict else 0.0
-
-    # Salva media e punteggi e2e nello stesso file (media in cima)
-    e2e_file = os.path.join(LOG_DIR, f"end_to_end_{method}_doc_n{doc_n}.json")
-    e2e_to_save = {"average_score": average_e2e_score}
-    e2e_to_save.update(e2e_scores_dict)
-    save_json_log(e2e_to_save, e2e_file, "Punteggi end-to-end")
-
-    # Calcolo e salvataggio correlazioni
-    correlations = {}
-    for metric_name in retrieval_metrics:
-        aligned_erag_scores = []
-        aligned_e2e_scores = []
-        num_queries_with_metric = 0
-
-        for query_id in test_queries_list:
-            query_result_dict = erag_results['per_input'].get(query_id, {})
-            erag_score = query_result_dict.get(metric_name)
-            if erag_score is not None:
-                aligned_erag_scores.append(erag_score)
-                aligned_e2e_scores.append(e2e_scores_dict[query_id])
-                num_queries_with_metric += 1
-
-        corr_entry = {
-            "num_pairs": num_queries_with_metric,
-            "spearman_corr": None,
-            "spearman_p": None,
-            "kendall_corr": None,
-            "kendall_p": None,
-        }
-
-        spearman_corr, spearman_p = stats.spearmanr(aligned_erag_scores, aligned_e2e_scores)
-        kendall_corr, kendall_p = stats.kendalltau(aligned_erag_scores, aligned_e2e_scores)
-        corr_entry.update({
-            "spearman_corr": float(spearman_corr),
-            "spearman_p": float(spearman_p),
-            "kendall_corr": float(kendall_corr),
-            "kendall_p": float(kendall_p),
-        })
-
-        print(f"\nFor metric {metric_name} ({method}, doc_n={doc_n}):")
-        print(f"  Spearman correlation: {spearman_corr:.3f} (p={spearman_p:.3f})")
-        print(f"  Kendall correlation:   {kendall_corr:.3f} (p={kendall_p:.3f})")
-
-        correlations[metric_name] = corr_entry
-
-    corr_file = os.path.join(LOG_DIR, f"correlations_{method}_doc_n{doc_n}.json")
-    save_json_log(correlations, corr_file, "Correlazioni retrieval vs end-to-end")
+    return {
+        "erag_results": erag_results,
+        "retrieval_metrics": retrieval_metrics,
+        "e2e_scores": e2e_scores_dict,
+        "e2e_average": average_e2e_score,
+        "correlations": correlations,
+    }
 
 
 if __name__=="__main__":
@@ -251,4 +344,4 @@ if __name__=="__main__":
                         choices=METRICS.keys(),
                         help=f"Evaluation metric to use. Choices: {list(METRICS.keys())}. Default is 'em' (exact_match).")
     args = parser.parse_args()
-    evaluation(args)
+    full_evaluation(args)
