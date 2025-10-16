@@ -3,6 +3,7 @@ import argparse
 import time
 import requests
 
+
 def split_into_passages(text, max_words=100):
     """
     Splits text into passages of up to max_words words (without overlap).
@@ -33,9 +34,7 @@ def process_kilt_page(page_json, max_words=100):
         para = para.strip()
         if not para:
             continue
-        # Split the paragraph into passages of max_words
         passages = split_into_passages(para, max_words=max_words)
-        # Concatenate title and passage for each segment, cioè assegna a quel titolo il passaggio a cui è legato
         for p in passages:
             doc = {"id": str(id) + "_" + str(passage_counter), "contents": title + " [SEP] " + p}
             docs.append(doc)
@@ -57,7 +56,7 @@ def process_source_request(url, out_path, args, buffer_size=2_000_000):
     max_records = args.max_record
     with (requests.get(url, stream=True, timeout=10) as in_file,
             open(out_path, 'w', encoding='utf-8') as out_file):
-        in_file.raise_for_status()    #s solleva errore se HTTP!=200
+        in_file.raise_for_status()
 
         buffer = []
         for i, line in enumerate(in_file.iter_lines(decode_unicode=True)):
@@ -74,8 +73,7 @@ def process_source_request(url, out_path, args, buffer_size=2_000_000):
             buffer.extend(docs)
 
             if len(buffer) >= buffer_size:
-                for doc in buffer:                   
-                    # Save each document as JSON Lines
+                for doc in buffer:
                     json.dump(doc, out_file)
                     out_file.write("\n")
                 processed += len(buffer)
@@ -95,7 +93,6 @@ def process_source_request(url, out_path, args, buffer_size=2_000_000):
     else:
         print("Preprocessing done: " + str(max_records) + " records processed")
         return str(max_records)
-
 
 
 if __name__=="__main__":

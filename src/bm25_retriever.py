@@ -1,9 +1,11 @@
+"""
+Uso CLI:
+  python -m pyserini.index.lucene -collection JsonCollection -input ../data/collection -index ../indexes/bm25_index -generator DefaultLuceneDocumentGenerator -threads 8 -storePositions -storeDocvectors -storeRaw
+"""
+
 import json
 from pyserini.search.lucene import LuceneSearcher
 from build_indexes import *
-
-# Pyserini BM25 indexing
-#python -m pyserini.index.lucene -collection JsonCollection -input ../data/collection -index ../indexes/bm25_index -generator DefaultLuceneDocumentGenerator -threads 8 -storePositions -storeDocvectors -storeRaw
 
 
 def bm25_retrieve(query, k=10):
