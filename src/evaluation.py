@@ -1,5 +1,6 @@
 import json
 import string
+import re
 import torch
 import erag
 import os
@@ -130,17 +131,23 @@ def save_json_log(data, file_path, description=None):
     else:
         print(f"Salvato in {file_path}.")
 
+def _limit_docs_per_query(retrieval_results_dict, k):
+    """
+    Ritorna una copia di retrieval_results_dict dove per ogni query i documenti
+    sono limitati ai primi k.
+    """
+    return {q: docs[:k] for q, docs in retrieval_results_dict.items()}
+
 
 def evaluation_erag(
-    args,
     expected_outputs,
     retrieval_results_dict,
     t5_generator_for_eval,
     downstream_metric_func,
     retrieval_metrics,
+    method,
     log_dir="../logs",
 ):
-    method = args.method
 
     print(f"\nEvaluating using eRAG...")
 
@@ -164,48 +171,83 @@ def evaluation_erag(
 
 
 def evaluation_e2e(
-    args,
     expected_outputs,
     retrieval_results_dict,
     t5_generator_for_eval,
     downstream_metric_func,
     test_queries_list,
+    method,
+    doc_n,
+    k_values,
     log_dir="../logs",
 ):
-    method = args.method
-    doc_n = args.doc_n
+    # Preparazione container per tutti i k
+    all_e2e_scores = {}
+    average_e2e_scores = {}
 
-    # Generazione end-to-end e punteggi
-    end_to_end_generated = t5_generator_for_eval(retrieval_results_dict)
-    e2e_scores_dict = downstream_metric_func(end_to_end_generated, expected_outputs)
+    # Itera su ogni k in k_values e valuta end-to-end limitando i documenti a k
+    for k in sorted(set(k_values)):
+        if k <= doc_n:
+            print(f"\nEvaluating end-to-end with top-{k} documents...")
+            # Limita i documenti per query a k
+            retrieval_results_topk = _limit_docs_per_query(retrieval_results_dict, k)
 
-    # Garantisce che tutte le query siano presenti
-    e2e_scores_dict = {q: e2e_scores_dict.get(q, 0) for q in test_queries_list}
+            # Generazione end-to-end e punteggi per questo k
+            end_to_end_generated = t5_generator_for_eval(retrieval_results_topk)
+            e2e_scores_dict = downstream_metric_func(end_to_end_generated, expected_outputs)
 
-    # Media
-    average_e2e_score = (sum(e2e_scores_dict.values()) / len(e2e_scores_dict)) if e2e_scores_dict else 0.0
+            # Garantisce che tutte le query siano presenti
+            e2e_scores_dict = {q: e2e_scores_dict.get(q, 0) for q in test_queries_list}
 
-    # Salva media e punteggi nello stesso file (media in cima)
+            # Media
+            average_e2e_score = (sum(e2e_scores_dict.values()) / len(e2e_scores_dict)) if e2e_scores_dict else 0.0
+
+            # Salva nel contenitore per questo k
+            all_e2e_scores[f"k_{k}"] = e2e_scores_dict
+            average_e2e_scores[f"k_{k}"] = average_e2e_score
+        else:
+            print(f"\nSkipping end-to-end evaluation for k={k} as it exceeds doc_n={doc_n}.")
+
+    # Salva tutto in un unico file di log
     e2e_file = os.path.join(log_dir, f"end_to_end_{method}_doc_n{doc_n}.json")
-    e2e_to_save = {"average_score": average_e2e_score}
-    e2e_to_save.update(e2e_scores_dict)
+    e2e_to_save = {
+        "average_scores": average_e2e_scores,
+        "per_k_scores": all_e2e_scores,
+    }
     save_json_log(e2e_to_save, e2e_file, "Punteggi end-to-end")
 
-    return e2e_scores_dict, average_e2e_score
+    return all_e2e_scores, average_e2e_scores
 
 
 def get_correlations(
     erag_results,
     retrieval_metrics,
-    e2e_scores_dict,
+    all_e2e_scores,
     test_queries_list,
     method,
     doc_n,
     log_dir="../logs",
 ):
+    def _select_k_key_for_metric(metric_name, fallback):
+        """
+        Dato il nome della metrica (es. 'P_10', 'ndcg_cut_5'),
+        prova a estrarre k. Se non presente, usa fallback.
+        """
+        m = re.search(r'(\d+)$', metric_name)
+        if m:
+            k = int(m.group(1))
+        else:
+            k = fallback
+
+        key = f"k_{k}"
+        return key, k
+
     correlations = {}
 
     for metric_name in retrieval_metrics:
+        e2e_key, k_used = _select_k_key_for_metric(metric_name, doc_n)
+        e2e_scores_dict = all_e2e_scores[e2e_key]
+
         aligned_erag_scores = []
         aligned_e2e_scores = []
 
@@ -222,6 +264,7 @@ def get_correlations(
             "spearman_p": None,
             "kendall_corr": None,
             "kendall_p": None,
+            "e2e_k_used": k_used,
         }
 
         # Calcolo correlazioni solo se ci sono abbastanza coppie e non sono costanti
@@ -241,11 +284,11 @@ def get_correlations(
                 "kendall_p": float(kendall_p),
             })
 
-            print(f"\nFor metric {metric_name} ({method}, doc_n={doc_n}):")
+            print(f"\nFor metric {metric_name} ({method}, using e2e k={k_used}):")
             print(f"  Spearman correlation: {spearman_corr:.3f} (p={spearman_p:.3f})")
             print(f"  Kendall correlation:   {kendall_corr:.3f} (p={kendall_p:.3f})")
         else:
-            print(f"\nFor metric {metric_name} ({method}, doc_n={doc_n}):")
+            print(f"\nFor metric {metric_name} ({method}, using e2e k={k_used}):")
             print("  Spearman correlation: N/A (dati insufficienti o costanti)")
             print("  Kendall correlation:  N/A (dati insufficienti o costanti)")
 
@@ -265,9 +308,7 @@ def define_retrieval_metrics(args):
             continue
         retrieval_metrics.extend([f'P_{k}', f'success_{k}'])
         if args.metric != 'f1':
-            retrieval_metrics.extend([f'recall_{k}', f'ndcg_cut_{k}'])
-    if args.metric != 'f1':
-        retrieval_metrics.extend(['map', 'recip_rank'])
+            retrieval_metrics.extend([f'recall_{k}', f'ndcg_cut_{k}', f'map_{k}', f'recip_rank_{k}'])
     return retrieval_metrics
 
 
@@ -286,23 +327,25 @@ def full_evaluation(args):
 
     # 2) Valutazione eRAG
     erag_results = evaluation_erag(
-        args=args,
         expected_outputs=test_expected_outputs,
         retrieval_results_dict=test_retrieval_results,
         t5_generator_for_eval=t5_generator_for_eval,
         downstream_metric_func=selected_metric_func,
         retrieval_metrics=retrieval_metrics,
+        method=args.method,
         log_dir=LOG_DIR
     )
 
-    # 3) Valutazione end-to-end
-    e2e_scores_dict, average_e2e_score = evaluation_e2e(
-        args=args,
+    # 3) Valutazione end-to-end per ogni k in k_values
+    all_e2e_scores, average_e2e_scores = evaluation_e2e(
         expected_outputs=test_expected_outputs,
         retrieval_results_dict=test_retrieval_results,
         t5_generator_for_eval=t5_generator_for_eval,
         downstream_metric_func=selected_metric_func,
         test_queries_list=test_queries_list,
+        method=args.method,
+        doc_n=args.doc_n,
+        k_values=args.k_values,
         log_dir=LOG_DIR
     )
 
@@ -310,7 +353,7 @@ def full_evaluation(args):
     correlations = get_correlations(
         erag_results=erag_results,
         retrieval_metrics=retrieval_metrics,
-        e2e_scores_dict=e2e_scores_dict,
+        all_e2e_scores=all_e2e_scores,
         test_queries_list=test_queries_list,
         method=args.method,
         doc_n=args.doc_n,
@@ -320,8 +363,8 @@ def full_evaluation(args):
     return {
         "erag_results": erag_results,
         "retrieval_metrics": retrieval_metrics,
-        "e2e_scores": e2e_scores_dict,
-        "e2e_average": average_e2e_score,
+        "all_e2e_scores": all_e2e_scores,
+        "e2e_average_scores": average_e2e_scores,
         "correlations": correlations,
     }
 
@@ -331,11 +374,11 @@ if __name__=="__main__":
     parser.add_argument("--model_dir", type=str, required=True, default="../models/fid_t5",
                         help="Model directory path")
     parser.add_argument("--k_values", type=int, nargs="+", required=True, default=[50],
-                        help="List of cut values to use for metrics computation.")
+                        help="List of cutoff values to use for metrics computation.")
     parser.add_argument("--method", type=str, default="BM25", choices=["BM25", "Contriever"],
                         help="Retrieval method to use (BM25 or Contriever). Default is 'BM25'.")
     parser.add_argument("--doc_n", type=int, default=50,
-                        help="Number of retrieved documents to use. Default is 50.")
+                        help="Number of documents to retrieve. Default is 50.")
     parser.add_argument("--test_dataset_path", type=str, required=True, default="../data/nq-dev-kilt.jsonl",
                         help="Validation file path")
     parser.add_argument("--metric",
