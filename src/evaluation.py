@@ -14,7 +14,7 @@ from fid_t5 import t5_fid_generator
 from src.contriever_retriever import DenseRetriever
 
 
-def model_loading(args):
+def model_loading(args, doc_n=50):
     
     print(f"Loading test dataset queries and expected outputs from: {args.test_dataset_path}")
     expected_outputs = load_expected_outputs(args.test_dataset_path)
@@ -36,7 +36,7 @@ def model_loading(args):
         )
 
     print(f"Retrieving documents using: {args.method}")
-    retrieve_results = retrieval_results(test_queries, method=args.method, k=args.doc_n, retriever=retriever)
+    retrieve_results = retrieval_results(test_queries, method=args.method, k=doc_n, retriever=retriever)
     print(f"Documents retrieved.")
 
     torch.cuda.empty_cache()
@@ -177,7 +177,6 @@ def evaluation_e2e(
     downstream_metric_func,
     test_queries_list,
     method,
-    doc_n,
     k_values,
     log_dir="../logs",
 ):
@@ -187,29 +186,25 @@ def evaluation_e2e(
 
     # Itera su ogni k in k_values e valuta end-to-end limitando i documenti a k
     for k in sorted(set(k_values)):
-        if k <= doc_n:
-            print(f"\nEvaluating end-to-end with top-{k} documents...")
-            # Limita i documenti per query a k
-            retrieval_results_topk = _limit_docs_per_query(retrieval_results_dict, k)
+        # Limita i documenti per query a k
+        retrieval_results_topk = _limit_docs_per_query(retrieval_results_dict, k)
 
-            # Generazione end-to-end e punteggi per questo k
-            end_to_end_generated = t5_generator_for_eval(retrieval_results_topk)
-            e2e_scores_dict = downstream_metric_func(end_to_end_generated, expected_outputs)
+        # Generazione end-to-end e punteggi per questo k
+        end_to_end_generated = t5_generator_for_eval(retrieval_results_topk)
+        e2e_scores_dict = downstream_metric_func(end_to_end_generated, expected_outputs)
 
-            # Garantisce che tutte le query siano presenti
-            e2e_scores_dict = {q: e2e_scores_dict.get(q, 0) for q in test_queries_list}
+        # Garantisce che tutte le query siano presenti
+        e2e_scores_dict = {q: e2e_scores_dict.get(q, 0) for q in test_queries_list}
 
-            # Media
-            average_e2e_score = (sum(e2e_scores_dict.values()) / len(e2e_scores_dict)) if e2e_scores_dict else 0.0
+        # Media
+        average_e2e_score = (sum(e2e_scores_dict.values()) / len(e2e_scores_dict)) if e2e_scores_dict else 0.0
 
-            # Salva nel contenitore per questo k
-            all_e2e_scores[f"k_{k}"] = e2e_scores_dict
-            average_e2e_scores[f"k_{k}"] = average_e2e_score
-        else:
-            print(f"\nSkipping end-to-end evaluation for k={k} as it exceeds doc_n={doc_n}.")
+        # Salva nel contenitore per questo k
+        all_e2e_scores[f"k_{k}"] = e2e_scores_dict
+        average_e2e_scores[f"k_{k}"] = average_e2e_score
 
     # Salva tutto in un unico file di log
-    e2e_file = os.path.join(log_dir, f"end_to_end_{method}_doc_n{doc_n}.json")
+    e2e_file = os.path.join(log_dir, f"end_to_end_{method}.json")
     e2e_to_save = {
         "average_scores": average_e2e_scores,
         "per_k_scores": all_e2e_scores,
@@ -294,22 +289,19 @@ def get_correlations(
 
         correlations[metric_name] = corr_entry
 
-    corr_file = os.path.join(log_dir, f"correlations_{method}_doc_n{doc_n}.json")
+    corr_file = os.path.join(log_dir, f"correlations_{method}.json")
     save_json_log(correlations, corr_file, "Correlazioni retrieval vs end-to-end")
     return correlations
 
 
 def define_retrieval_metrics(args):
-    doc_n = args.doc_n
     k_values = args.k_values
     retrieval_metrics = []
     for k in k_values:
-        if k > doc_n:
-            continue
         retrieval_metrics.extend([f'P_{k}', f'success_{k}'])
         if args.metric != 'f1':
             retrieval_metrics.extend([f'recall_{k}', f'ndcg_cut_{k}', f'map_{k}', f'recip_rank_{k}'])
-    return retrieval_metrics
+    return max(k_values), retrieval_metrics
 
 
 def full_evaluation(args):
@@ -317,12 +309,12 @@ def full_evaluation(args):
     os.makedirs(LOG_DIR, exist_ok=True)
     
     # Definizione metriche
-    retrieval_metrics = define_retrieval_metrics(args)
+    doc_n, retrieval_metrics = define_retrieval_metrics(args)
     selected_metric_func = METRICS[args.metric]
     print(f"\nUsing evaluation metric: {args.metric.upper()}")
 
     # 1) Caricamento modello e dati
-    test_expected_outputs, test_retrieval_results, t5_generator_for_eval, test_queries_set = model_loading(args)
+    test_expected_outputs, test_retrieval_results, t5_generator_for_eval, test_queries_set = model_loading(args, doc_n=doc_n)
     test_queries_list = sorted(list(test_queries_set))
 
     # 2) Valutazione eRAG
@@ -344,7 +336,6 @@ def full_evaluation(args):
         downstream_metric_func=selected_metric_func,
         test_queries_list=test_queries_list,
         method=args.method,
-        doc_n=args.doc_n,
         k_values=args.k_values,
         log_dir=LOG_DIR
     )
@@ -356,7 +347,7 @@ def full_evaluation(args):
         all_e2e_scores=all_e2e_scores,
         test_queries_list=test_queries_list,
         method=args.method,
-        doc_n=args.doc_n,
+        doc_n=doc_n,
         log_dir=LOG_DIR
     )
 
@@ -377,8 +368,6 @@ if __name__=="__main__":
                         help="List of cutoff values to use for metrics computation.")
     parser.add_argument("--method", type=str, default="BM25", choices=["BM25", "Contriever"],
                         help="Retrieval method to use (BM25 or Contriever). Default is 'BM25'.")
-    parser.add_argument("--doc_n", type=int, default=50,
-                        help="Number of documents to retrieve. Default is 50.")
     parser.add_argument("--test_dataset_path", type=str, required=True, default="../data/nq-dev-kilt.jsonl",
                         help="Validation file path")
     parser.add_argument("--metric",
