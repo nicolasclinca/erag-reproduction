@@ -35,7 +35,7 @@ def model_loading(args, doc_n=50):
             nprobe=nprobe,
         )
 
-    print(f"Retrieving documents using: {args.method}")
+    print(f"Retrieving {doc_n} documents per query using: {args.method}")
     retrieve_results = retrieval_results(test_queries, method=args.method, k=doc_n, retriever=retriever)
     print(f"Documents retrieved.")
 
@@ -112,7 +112,6 @@ def f1_metric(generated_outputs, expected_outputs):
         f1_scores[query] = max_f1
     return f1_scores
 
- # Create a dictionary to map metric names (strings) to their corresponding functions
 METRICS = {
     "em": exact_match_metric,
     "f1": f1_metric,
@@ -127,9 +126,9 @@ def save_json_log(data, file_path, description=None):
     with open(file_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
     if description:
-        print(f"{description} salvato in {file_path}.")
+        print(f"{description} saved in {file_path}.")
     else:
-        print(f"Salvato in {file_path}.")
+        print(f"Saved in {file_path}.")
 
 def _limit_docs_per_query(retrieval_results_dict, k):
     """
@@ -186,6 +185,7 @@ def evaluation_e2e(
 
     # Itera su ogni k in k_values e valuta end-to-end limitando i documenti a k
     for k in sorted(set(k_values)):
+        print(f"\nEvaluating end-to-end for k={k}...")
         # Limita i documenti per query a k
         retrieval_results_topk = _limit_docs_per_query(retrieval_results_dict, k)
 
@@ -279,11 +279,11 @@ def get_correlations(
                 "kendall_p": float(kendall_p),
             })
 
-            print(f"\nFor metric {metric_name} ({method}, using e2e k={k_used}):")
+            print(f"\nFor metric {metric_name} ({method}, k={k_used}):")
             print(f"  Spearman correlation: {spearman_corr:.3f} (p={spearman_p:.3f})")
             print(f"  Kendall correlation:   {kendall_corr:.3f} (p={kendall_p:.3f})")
         else:
-            print(f"\nFor metric {metric_name} ({method}, using e2e k={k_used}):")
+            print(f"\nFor metric {metric_name} ({method}, k={k_used}):")
             print("  Spearman correlation: N/A (dati insufficienti o costanti)")
             print("  Kendall correlation:  N/A (dati insufficienti o costanti)")
 
