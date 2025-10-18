@@ -1,14 +1,14 @@
-import json
-from src.bm25_retriever import bm25_retrieve
-import argparse
-import os
-from src.contriever_retriever import DenseRetriever, contriever_batch_retrieve
-
-
 """
 Uso CLI:
     python data_loader.py --datasets ../data/nq-train-kilt.jsonl ../data/nq-dev-kilt.jsonl ../data/fever-train-kilt.jsonl ../data/fever-dev-kilt.jsonl ../data/hotpotqa-train-kilt.jsonl ../data/hotpotqa-dev-kilt.jsonl ../data/triviaqa-train-kilt.jsonl ../data/triviaqa-dev-kilt.jsonl ../data/wow-train-kilt.jsonl ../data/wow-dev-kilt.jsonl --method Contriever
 """
+
+
+import json
+from src.bm25_retriever import bm25_retrieve
+import argparse
+import os
+from src.contriever_retriever import DenseRetriever
 
 
 def load_expected_outputs(filename):
@@ -61,7 +61,6 @@ def augment_datasets(args):
         * Esegue il retrieval (BM25 o Contriever)
         * Salva il dataset arricchito in <same_dir>/<basename>-augmented.json
     """
-    method = args.method
     datasets = args.datasets or []
 
     if not datasets:
@@ -70,22 +69,13 @@ def augment_datasets(args):
 
     # Istanzia il retriever se usiamo Contriever
     retriever = None
-    if method == 'Contriever':
-        index_path = "./index_out_full/ivfpq_opq_contriever.faiss"
-        collection_path = "../data/collection/wikipedia_passages.jsonl"
-        offsets_path = "./index_out_full/collection_offsets.u64.bin"
-        nprobe = 64
-
+    if args.method == 'Contriever':
         retriever = DenseRetriever(
-            index_path=index_path,
-            collection_path=collection_path,
-            offsets_path=offsets_path,
-            nprobe=nprobe,
+            index_path="./index_out_full/ivfpq_opq_contriever.faiss",
+            collection_path="../data/collection/wikipedia_passages.jsonl",
+            offsets_path="./index_out_full/collection_offsets.u64.bin",
+            nprobe=64,
         )
-
-    # Parametri (esponibili a CLI in futuro)
-    k = 50
-    batch_size = 256
 
     for dataset_path in datasets:
         if not dataset_path:
@@ -104,10 +94,10 @@ def augment_datasets(args):
             # Retrieval
             retrieve_res = retrieval_results(
                 queries=queries,
-                method=method,
-                k=k,
+                method=args.method,
+                k=args.k,
                 retriever=retriever,
-                batch_size=batch_size,
+                batch_size=args.batch_size,
             )
 
             # Augment e salvataggio
@@ -141,6 +131,18 @@ if __name__ == "__main__":
             required=True,
             default="BM25",
             help="Retrieval method (BM25 or Contriever)"
+        )
+        parser.add_argument(
+            "--k",
+            type=int,
+            default=50,
+            help="Number of documents to retrieve for each query (default: 50)"
+        )
+        parser.add_argument(
+            "--batch_size",
+            type=int,
+            default=256,
+            help="Batch size for dense retrieval (default: 256)"
         )
         args = parser.parse_args()
         augment_datasets(args)

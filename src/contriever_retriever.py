@@ -157,24 +157,23 @@ class DenseRetriever:
             results.append(obj)
         return results
     
-
-def contriever_batch_retrieve(
-    self,
-    queries: List[str],
-    k: int = 50,
-    batch_size: int = 256,
-    return_cosine: bool = False,
-) -> Dict[str, List[str]]:
-    """
-    Restituisce {query: [doc1, doc2, ..., dock]} usando Contriever in batch.
-    """
-    out: Dict[str, List[str]] = {}
-    for i in range(0, len(queries), batch_size):
-        batch_q = queries[i : i + batch_size]
-        results = self.batch_dense_retrieve(batch_q, k=k, return_cosine=return_cosine)
-        for q, r in zip(batch_q, results):
-            out[q] = r["documents"]
-    return out
+    def contriever_batch_retrieve(
+        self,
+        queries: List[str],
+        k: int = 50,
+        batch_size: int = 256,
+        return_cosine: bool = False,
+    ) -> Dict[str, List[str]]:
+        """
+        Restituisce {query: [doc1, doc2, ..., dock]} usando Contriever in batch.
+        """
+        out: Dict[str, List[str]] = {}
+        for i in range(0, len(queries), batch_size):
+            batch_q = queries[i : i + batch_size]
+            results = self.batch_dense_retrieve(batch_q, k=k, return_cosine=return_cosine)
+            for q, r in zip(batch_q, results):
+                out[q] = r["documents"]
+        return out
 
 
 # --------- CLI ---------
