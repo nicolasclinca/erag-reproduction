@@ -1,6 +1,23 @@
 """
-Uso CLI:
-  python -m pyserini.index.lucene -collection JsonCollection -input ../data/collection -index ../indexes/bm25_index -generator DefaultLuceneDocumentGenerator -threads 8 -storePositions -storeDocvectors -storeRaw
+bm25_retriever.py
+Retrieval BM25 su indice Lucene (PySerini) pre-costruito.
+Restituisce i top-k passaggi più rilevanti per una query.
+
+Note:
+
+L'indice deve essere già costruito con PySerini (vedi esempio sotto).
+Hardcoded path: '../indexes/bm25_index'
+Costruzione indice (eseguire una volta):
+python -m pyserini.index.lucene
+-collection JsonCollection
+-input ../data/collection
+-index ../indexes/bm25_index
+-generator DefaultLuceneDocumentGenerator
+-threads 8
+-storePositions -storeDocvectors -storeRaw
+
+Uso CLI (esempio):
+python bm25_retriever.py
 """
 
 import json

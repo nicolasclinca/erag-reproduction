@@ -1,3 +1,20 @@
+"""
+preprocess_wikipedia.py
+Scarica e preprocessa il KILT knowledge source (Wikipedia dump).
+Divide ogni articolo in passaggi di max 100 parole e salva in formato JSONL:
+{"id": "wikipedia_id_passage_num", "contents": "title [SEP] passage_text"}
+
+Output: ../data/collection/wikipedia_passages.jsonl
+
+Uso CLI:
+
+Download completo (~5.9M articoli → ~36M passaggi)
+python preprocess_wikipedia.py
+
+Limita a N record (per test/debug)
+python preprocess_wikipedia.py --max_record 10000
+"""
+
 import ujson as json
 import argparse
 import time

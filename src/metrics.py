@@ -1,3 +1,18 @@
+"""
+metrics.py
+Metriche di valutazione per QA: Exact Match (EM) e F1 token-level.
+Normalizzazione: lowercase, rimozione punteggiatura, whitespace extra.
+
+EM: 1 se la risposta generata matcha esattamente almeno una gold answer, 0 altrimenti.
+F1: massimo F1 score tra tutte le gold answers per query (precision/recall sui token).
+
+Input:
+
+generated_outputs: {query: generated_answer_string}
+expected_outputs: {query: [gold_answer1, gold_answer2, ...]}
+Output: {query: score}
+"""
+
 import string
 from collections import Counter
 

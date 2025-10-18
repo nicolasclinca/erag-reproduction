@@ -1,3 +1,19 @@
+"""
+evaluation.py
+Valutazione pipeline RAG (retrieval + generazione T5-FiD):
+- Metriche eRAG
+- Punteggi end-to-end
+- Correlazioni Spearman/Kendall tra metriche eRAG e performance end-to-end
+Salva log JSON in ../logs
+
+Uso CLI:
+  python evaluation.py --model_dir ../models/fid_t5 \
+                       --k_values 10 30 50 \
+                       --method BM25 \
+                       --test_dataset_path ../data/nq-dev-kilt.jsonl \
+                       --metric em
+"""
+
 import json
 import re
 import torch

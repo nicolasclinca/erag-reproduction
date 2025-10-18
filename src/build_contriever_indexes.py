@@ -8,7 +8,7 @@ Requisiti:
   pip install faiss-cpu transformers
 
 Uso CLI:
-  python build_indexes.py --input_jsonl ../data/collection/wikipedia_passages.jsonl \
+  python build_contriever_indexes.py --input_jsonl ../data/collection/wikipedia_passages.jsonl \
                           --out_dir ./index_out_full \
                           --tune --tune_docs 100000 \
                           --train_size 1500000 \

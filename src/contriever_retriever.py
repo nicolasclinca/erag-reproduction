@@ -4,7 +4,7 @@ Dense retrieval su collezione JSONL preprocessata (id, contents) + indice FAISS 
 Supporto offsets binari per random access (consigliato).
 
 Uso CLI:
-  python retrieval.py --index ./index_out_full/ivfpq_opq_contriever.faiss \
+  python contriever_retriever.py --index ./index_out_full/ivfpq_opq_contriever.faiss \
                       --collection ./data/collection/wikipedia_passages.jsonl \
                       --offsets ./index_out_full/collection_offsets.u64.bin \
                       --query "When did Apollo 11 land?" --k 5

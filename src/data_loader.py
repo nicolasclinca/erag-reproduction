@@ -1,6 +1,21 @@
 """
+data_loader.py
+Caricamento dataset KILT e creazione di dataset augmented con documenti retrieved.
+Formato output: [{"query": str, "retrieved_docs": [doc1, ...], "gold_answer": str}, ...]
+Supporta BM25 e Contriever per il retrieval.
+
 Uso CLI:
-    python data_loader.py --datasets ../data/nq-train-kilt.jsonl ../data/nq-dev-kilt.jsonl ../data/fever-train-kilt.jsonl ../data/fever-dev-kilt.jsonl ../data/hotpotqa-train-kilt.jsonl ../data/hotpotqa-dev-kilt.jsonl ../data/triviaqa-train-kilt.jsonl ../data/triviaqa-dev-kilt.jsonl ../data/wow-train-kilt.jsonl ../data/wow-dev-kilt.jsonl --method Contriever
+
+BM25
+python data_loader.py --datasets ../data/nq-train-kilt.jsonl ../data/nq-dev-kilt.jsonl
+--method BM25
+--k 50
+
+Contriever
+python data_loader.py --datasets ../data/nq-train-kilt.jsonl
+--method Contriever
+--k 50
+--batch_size 256
 """
 
 

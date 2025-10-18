@@ -1,7 +1,12 @@
 """
+build_offsets.py
+Costruisce un file binario di offset (uint64 little-endian) per accesso random
+a un file JSONL. Ogni offset punta all'inizio di una riga nel file collection.
+Utile per DenseRetriever con FAISS per recuperare rapidamente i documenti per ID.
+
 Uso CLI:
-  python build_offsets.py --collection ../data/collection/wikipedia_passages.jsonl \
-                          --out ./index_out_full/collection_offsets.u64.bin
+python build_offsets.py --collection ../data/collection/wikipedia_passages.jsonl
+--out ./index_out_full/collection_offsets.u64.bin
 """
 
 import os, struct, argparse
