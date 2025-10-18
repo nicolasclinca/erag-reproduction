@@ -75,7 +75,7 @@ def evaluation_e2e(
     retrieval_results_dict,
     t5_generator_for_eval,
     downstream_metric_func,
-    test_queries_list,
+    test_queries,
     method,
     k_values,
     log_dir="../logs",
@@ -95,7 +95,7 @@ def evaluation_e2e(
         e2e_scores_dict = downstream_metric_func(end_to_end_generated, expected_outputs)
 
         # Garantisce che tutte le query siano presenti
-        e2e_scores_dict = {q: e2e_scores_dict.get(q, 0) for q in test_queries_list}
+        e2e_scores_dict = {q: e2e_scores_dict.get(q, 0) for q in test_queries}
 
         # Media
         average_e2e_score = (sum(e2e_scores_dict.values()) / len(e2e_scores_dict)) if e2e_scores_dict else 0.0
@@ -119,7 +119,7 @@ def get_correlations(
     erag_results,
     retrieval_metrics,
     all_e2e_scores,
-    test_queries_list,
+    test_queries,
     method,
     doc_n,
     log_dir="../logs",
@@ -147,7 +147,7 @@ def get_correlations(
         aligned_erag_scores = []
         aligned_e2e_scores = []
 
-        for query_id in test_queries_list:
+        for query_id in test_queries:
             query_result_dict = erag_results['per_input'].get(query_id, {})
             erag_score = query_result_dict.get(metric_name)
             if erag_score is not None:
@@ -204,21 +204,22 @@ def define_retrieval_metrics(k_values, metric):
 
 
 def full_evaluation(args):
+    # 0) Preparazione log directory
     LOG_DIR = "../logs"
     os.makedirs(LOG_DIR, exist_ok=True)
     
-    # 0) Definizione metriche
+    # 1) Definizione metriche
     doc_n, retrieval_metrics = define_retrieval_metrics(args.k_values, args.metric)
     selected_metric_func = METRICS[args.metric]
     print(f"\nUsing evaluation metric: {args.metric.upper()}")
 
-    # 1) Caricamento dataset di test
+    # 2) Caricamento dataset di test
     print(f"Loading test dataset queries and expected outputs from: {args.test_dataset_path}")
     expected_outputs = load_expected_outputs(args.test_dataset_path)
-    test_queries = list(expected_outputs.keys())
+    test_queries = sorted(list(expected_outputs.keys()))
     print(f"Loaded {len(test_queries)} test queries.") 
 
-    # 2) Retrieval sui dati di test
+    # 3) Retrieval sui dati di test
     print(f"Retrieving {doc_n} documents per query using: {args.method}")
     retriever = None
     if args.method == 'Contriever':
@@ -233,7 +234,7 @@ def full_evaluation(args):
 
     torch.cuda.empty_cache()
 
-    # 3) Caricamento modello T5
+    # 4) Caricamento modello T5
     print(f"Loading model from: {args.model_dir}")
     model = T5ForConditionalGeneration.from_pretrained(args.model_dir)
     tokenizer = T5Tokenizer.from_pretrained(args.model_dir)
@@ -252,10 +253,8 @@ def full_evaluation(args):
         max_output_len=64,
         num_beams=4
     )
-    
-    test_queries_list = sorted(list(test_queries))
 
-    # 2) Valutazione eRAG
+    # 5) Valutazione eRAG
     erag_results = evaluation_erag(
         expected_outputs=expected_outputs,
         retrieval_results_dict=test_retrieval_results,
@@ -266,24 +265,24 @@ def full_evaluation(args):
         log_dir=LOG_DIR
     )
 
-    # 3) Valutazione end-to-end per ogni k in k_values
+    # 6) Valutazione end-to-end per ogni k in k_values
     all_e2e_scores, average_e2e_scores = evaluation_e2e(
         expected_outputs=expected_outputs,
         retrieval_results_dict=test_retrieval_results,
         t5_generator_for_eval=t5_generator_for_eval,
         downstream_metric_func=selected_metric_func,
-        test_queries_list=test_queries_list,
+        test_queries=test_queries,
         method=args.method,
         k_values=args.k_values,
         log_dir=LOG_DIR
     )
 
-    # 4) Correlazioni tra metriche eRAG e punteggi end-to-end
+    # 7) Correlazioni tra metriche eRAG e punteggi end-to-end
     correlations = get_correlations(
         erag_results=erag_results,
         retrieval_metrics=retrieval_metrics,
         all_e2e_scores=all_e2e_scores,
-        test_queries_list=test_queries_list,
+        test_queries=test_queries,
         method=args.method,
         doc_n=doc_n,
         log_dir=LOG_DIR

@@ -1,10 +1,11 @@
-import os, struct, argparse
-
 """
 Uso CLI:
   python build_offsets.py --collection ../data/collection/wikipedia_passages.jsonl \
                           --out ./index_out_full/collection_offsets.u64.bin
 """
+
+import os, struct, argparse
+
 
 def build_offsets(collection_path: str, offsets_path: str) -> int:
     os.makedirs(os.path.dirname(offsets_path) or ".", exist_ok=True)
