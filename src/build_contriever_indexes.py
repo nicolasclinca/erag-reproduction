@@ -139,13 +139,14 @@ class ContrieverEncoder:
         self.device = device or (torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"))
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
         self.model = AutoModel.from_pretrained(model_name).to(self.device); self.model.eval()
+        self.D = self.model.config.hidden_size
         self.max_length = max_length; self.dtype = dtype
         torch.backends.cuda.matmul.allow_tf32 = True
         try: torch.set_float32_matmul_precision("high")
         except Exception: pass
 
     def encode_with(self, docs: List[str], batch_size: int, flush_every: int) -> np.ndarray:
-        if not docs: return np.empty((0, D), dtype=np.float32)
+        if not docs: return np.empty((0, self.D), dtype=np.float32)
         gpu_blocks, cpu_blocks = [], []
         pf = TokenizePrefetcher(self.tokenizer, self.device, batch_size, self.max_length,
                                 prefetch_batches=8 if batch_size<=16 else 4)
@@ -205,7 +206,7 @@ def autotune_bs_flush(encoder: ContrieverEncoder, input_jsonl: str, tune_docs: i
         log(f"[tune] bs={bs:>3}, flush={fe:>5} -> {docs_s:6.1f} docs/s | peak {peak:4.2f} GB | {status}")
     ok_rows = [r for r in rows if r[2]]
     if not ok_rows:
-        log("[tune] Nessuna combinazione valida. Uso fallback bs=12, flush=8192.")
+        log("[tune] Nessuna combinazione valida. Uso fallback bs=64, flush=8192.")
         return 64, 8192
     ok_rows.sort(key=lambda r: (r[0], -r[1]), reverse=True)  # max docs/s, poi min peak
     best_docs, best_peak, _, best_bs, best_fe = ok_rows[0]
@@ -234,7 +235,7 @@ def build_training_matrix(input_jsonl: str, encoder: ContrieverEncoder, train_si
         xb = encoder.encode_with(buf, batch_size=bs, flush_every=fe)
         take = min(train_size - total, xb.shape[0])
         blocks.append(xb[:take].astype(np.float32, copy=False)); total += take
-    X = np.vstack(blocks) if blocks else np.empty((0, D), dtype=np.float32)
+    X = np.vstack(blocks) if blocks else np.empty((0, encoder.D), dtype=np.float32)
     log(f"[train] Done: {X.shape[0]:,} vectors | {(time.time()-t0)/60:.1f} min")
     return X
 
@@ -248,9 +249,16 @@ def build_or_load_index(train_vectors: np.ndarray, out_dir: str, nlist: int, m: 
         if not isinstance(idx, (faiss.IndexIDMap, faiss.IndexIDMap2)):
             idx = faiss.IndexIDMap2(idx)
         try:
-            if hasattr(idx, "nprobe"): idx.nprobe = nprobe
-            elif hasattr(idx, "index") and hasattr(idx.index, "nprobe"): idx.index.nprobe = nprobe
-        except Exception: pass
+            if hasattr(idx, "nprobe"):
+                idx.nprobe = nprobe
+            elif hasattr(idx, "index"):
+                inner = idx.index
+                if hasattr(inner, "nprobe"):
+                    inner.nprobe = nprobe
+                elif hasattr(inner, "index") and hasattr(inner.index, "nprobe"):
+                    inner.index.nprobe = nprobe
+        except Exception:
+            pass
         log(f"[faiss] Loaded existing index: {index_path}")
         return idx
 
