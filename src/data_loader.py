@@ -37,7 +37,7 @@ def retrieval_results(queries, method='BM25', k=50, retriever=None, batch_size=2
         raise ValueError(f"Unknown method: {method}")
 
 
-def augment_with_retrieved_documents(dataset, retrieval_results):
+def augment_with_retrieved_documents(dataset, retrieved_results):
     """
     Restituisce una lista di dizionari nel formato:
         {"query": str,
@@ -46,7 +46,7 @@ def augment_with_retrieved_documents(dataset, retrieval_results):
     """
     augmented_data = []
     for query, gold_answers in dataset.items():
-        retrieved_docs = retrieval_results.get(query, [])
+        retrieved_docs = retrieved_results.get(query, [])
         target_text = gold_answers[0] # Since it's a multi-answer task, we will only take the first answer
         augmented_data.append({"query": query, "retrieved_docs": retrieved_docs, "gold_answer": target_text})
     return augmented_data
@@ -92,7 +92,7 @@ def augment_datasets(args):
             print(f"Loaded {len(queries)} queries")
 
             # Retrieval
-            retrieve_res = retrieval_results(
+            retrieved_results = retrieval_results(
                 queries=queries,
                 method=args.method,
                 k=args.k,
@@ -101,7 +101,7 @@ def augment_datasets(args):
             )
 
             # Augment e salvataggio
-            augmented = augment_with_retrieved_documents(expected_outputs, retrieve_res)
+            augmented = augment_with_retrieved_documents(expected_outputs, retrieved_results)
             dirn = os.path.dirname(dataset_path) or "."
             base = os.path.splitext(os.path.basename(dataset_path))[0]
             out_path = os.path.join(dirn, f"{base}-augmented.json")
@@ -128,7 +128,7 @@ if __name__ == "__main__":
         parser.add_argument(
             "--method",
             type=str,
-            required=True,
+            choices=["BM25", "Contriever"],
             default="BM25",
             help="Retrieval method (BM25 or Contriever)"
         )

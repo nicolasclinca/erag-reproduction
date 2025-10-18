@@ -310,7 +310,7 @@ def train(args):
                 outputs = model(
                     labels=labels,
                     encoder_outputs=encoder_outputs,
-                    encoder_attention_mask=enc_attn_mask,
+                    attention_mask=enc_attn_mask,
                     return_dict=True,
                 )
                 loss = outputs.loss
@@ -446,7 +446,7 @@ def t5_fid_generator(
             # Decoding
             gen_ids = model.generate(
                 encoder_outputs=encoder_outputs_for_generate,
-                encoder_attention_mask=enc_attn_mask,
+                attention_mask=enc_attn_mask,
                 num_beams=num_beams,
                 max_new_tokens=max_output_len,
                 early_stopping=True,
