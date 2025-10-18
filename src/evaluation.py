@@ -1,5 +1,4 @@
 import json
-import string
 import re
 import torch
 import erag
@@ -8,109 +7,11 @@ import scipy.stats as stats
 from functools import partial
 from transformers import T5Tokenizer, T5ForConditionalGeneration
 from data_loader import retrieval_results, load_expected_outputs
-from collections import Counter
 import argparse
 from fid_t5 import t5_fid_generator
 from src.contriever_retriever import DenseRetriever
+from src.metrics import exact_match_metric, f1_metric
 
-
-def model_loading(args, doc_n=50):
-    
-    print(f"Loading test dataset queries and expected outputs from: {args.test_dataset_path}")
-    expected_outputs = load_expected_outputs(args.test_dataset_path)
-    test_queries = list(expected_outputs.keys())
-    print(f"Loaded {len(test_queries)} test queries.")      
-
-    retriever = None
-    if args.method == 'Contriever':
-        index_path = "./index_out_full/ivfpq_opq_contriever.faiss"
-        collection_path = "../data/collection/wikipedia_passages.jsonl"
-        offsets_path = "./index_out_full/collection_offsets.u64.bin"
-        nprobe = 64
-
-        retriever = DenseRetriever(
-            index_path=index_path,
-            collection_path=collection_path,
-            offsets_path=offsets_path,
-            nprobe=nprobe,
-        )
-
-    print(f"Retrieving {doc_n} documents per query using: {args.method}")
-    retrieve_results = retrieval_results(test_queries, method=args.method, k=doc_n, retriever=retriever)
-    print(f"Documents retrieved.")
-
-    torch.cuda.empty_cache()
-    
-    model_dir = args.model_dir
-    max_input_len = 256
-    max_output_len = 64
-    num_beams_eval = 4
-
-    print(f"Loading model from: {model_dir}")
-    model = T5ForConditionalGeneration.from_pretrained(model_dir)
-    tokenizer = T5Tokenizer.from_pretrained(model_dir)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
-    model.eval()
-    print(f"Model loaded on device: {device}")
-    
-    # Create a partial function that has model, tokenizer, device, etc. pre-filled
-    t5_generator_for_eval = partial(
-        t5_fid_generator,
-        model=model,
-        tokenizer=tokenizer,
-        device=device,
-        max_input_len=max_input_len,
-        max_output_len=max_output_len,
-        num_beams=num_beams_eval
-    )
-    
-    return expected_outputs, retrieve_results, t5_generator_for_eval, test_queries
-
-    
-def normalize_answer(s):
-    """Converts text to lowercase, removes punctuation and extra spaces."""
-    return ' '.join(''.join(ch for ch in s.lower() if ch not in string.punctuation).split())
-
-def exact_match_metric(generated_outputs, expected_outputs):
-    """Computes if the generated text (normalized) exactly matches one of the gold answers (normalized).
-    Returns a dict {query: score}, where score is 1 or 0."""
-    return {query: 1 if any(normalize_answer(gen) == normalize_answer(gold) for gold in expected_outputs.get(query, [])) else 0 for query, gen in generated_outputs.items()}
-
-def _f1_score(prediction, ground_truth):
-    """Helper function to compute F1 score for a single prediction and ground truth."""
-    prediction_tokens = normalize_answer(prediction).split()
-    ground_truth_tokens = normalize_answer(ground_truth).split()
-
-    if not prediction_tokens or not ground_truth_tokens:
-        return 0.0
-
-    common = Counter(prediction_tokens) & Counter(ground_truth_tokens)
-    num_same = sum(common.values())
-
-    if num_same == 0:
-        return 0.0
-
-    precision = 1.0 * num_same / len(prediction_tokens)
-    recall = 1.0 * num_same / len(ground_truth_tokens)
-    f1 = (2 * precision * recall) / (precision + recall)
-    return f1
-
-def f1_metric(generated_outputs, expected_outputs):
-    """
-    Computes the F1 score for each query.
-    For each query, it takes the maximum F1 score over all possible gold answers.
-    Returns a dict {query: f1_score}.
-    """
-    f1_scores = {}
-    for query, gen_answer in generated_outputs.items():
-        gold_answers = expected_outputs.get(query, [])
-        if not gold_answers:
-            f1_scores[query] = 0.0
-            continue
-        max_f1 = max(_f1_score(gen_answer, gold) for gold in gold_answers)
-        f1_scores[query] = max_f1
-    return f1_scores
 
 METRICS = {
     "em": exact_match_metric,
@@ -293,13 +194,11 @@ def get_correlations(
     save_json_log(correlations, corr_file, "Correlazioni retrieval vs end-to-end")
     return correlations
 
-
-def define_retrieval_metrics(args):
-    k_values = args.k_values
+def define_retrieval_metrics(k_values, metric):
     retrieval_metrics = []
     for k in k_values:
         retrieval_metrics.extend([f'P_{k}', f'success_{k}'])
-        if args.metric != 'f1':
+        if metric != 'f1':
             retrieval_metrics.extend([f'recall_{k}', f'ndcg_cut_{k}', f'map_{k}', f'recip_rank_{k}'])
     return max(k_values), retrieval_metrics
 
@@ -308,18 +207,57 @@ def full_evaluation(args):
     LOG_DIR = "../logs"
     os.makedirs(LOG_DIR, exist_ok=True)
     
-    # Definizione metriche
-    doc_n, retrieval_metrics = define_retrieval_metrics(args)
+    # 0) Definizione metriche
+    doc_n, retrieval_metrics = define_retrieval_metrics(args.k_values, args.metric)
     selected_metric_func = METRICS[args.metric]
     print(f"\nUsing evaluation metric: {args.metric.upper()}")
 
-    # 1) Caricamento modello e dati
-    test_expected_outputs, test_retrieval_results, t5_generator_for_eval, test_queries_set = model_loading(args, doc_n=doc_n)
-    test_queries_list = sorted(list(test_queries_set))
+    # 1) Caricamento dataset di test
+    print(f"Loading test dataset queries and expected outputs from: {args.test_dataset_path}")
+    expected_outputs = load_expected_outputs(args.test_dataset_path)
+    test_queries = list(expected_outputs.keys())
+    print(f"Loaded {len(test_queries)} test queries.") 
+
+    # 2) Retrieval sui dati di test
+    print(f"Retrieving {doc_n} documents per query using: {args.method}")
+    retriever = None
+    if args.method == 'Contriever':
+        retriever = DenseRetriever(
+            index_path="./index_out_full/ivfpq_opq_contriever.faiss",
+            collection_path="../data/collection/wikipedia_passages.jsonl",
+            offsets_path="./index_out_full/collection_offsets.u64.bin",
+            nprobe=64,
+        )
+    test_retrieval_results = retrieval_results(test_queries, method=args.method, k=doc_n, retriever=retriever)
+    print(f"Documents retrieved.")
+
+    torch.cuda.empty_cache()
+
+    # 3) Caricamento modello T5
+    print(f"Loading model from: {args.model_dir}")
+    model = T5ForConditionalGeneration.from_pretrained(args.model_dir)
+    tokenizer = T5Tokenizer.from_pretrained(args.model_dir)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    model.eval()
+    print(f"Model loaded on device: {device}")
+    
+    # Create a partial function that has model, tokenizer, device, etc. pre-filled
+    t5_generator_for_eval = partial(
+        t5_fid_generator,
+        model=model,
+        tokenizer=tokenizer,
+        device=device,
+        max_input_len=256,
+        max_output_len=64,
+        num_beams=4
+    )
+    
+    test_queries_list = sorted(list(test_queries))
 
     # 2) Valutazione eRAG
     erag_results = evaluation_erag(
-        expected_outputs=test_expected_outputs,
+        expected_outputs=expected_outputs,
         retrieval_results_dict=test_retrieval_results,
         t5_generator_for_eval=t5_generator_for_eval,
         downstream_metric_func=selected_metric_func,
@@ -330,7 +268,7 @@ def full_evaluation(args):
 
     # 3) Valutazione end-to-end per ogni k in k_values
     all_e2e_scores, average_e2e_scores = evaluation_e2e(
-        expected_outputs=test_expected_outputs,
+        expected_outputs=expected_outputs,
         retrieval_results_dict=test_retrieval_results,
         t5_generator_for_eval=t5_generator_for_eval,
         downstream_metric_func=selected_metric_func,
@@ -365,7 +303,7 @@ if __name__=="__main__":
     parser.add_argument("--model_dir", type=str, required=True, default="../models/fid_t5",
                         help="Model directory path")
     parser.add_argument("--k_values", type=int, nargs="+", required=True, default=[50],
-                        help="List of cutoff values to use for metrics computation.")
+                        help="List of cutoff values to use for metrics computation. (Highiest will be used as number of retrieved docs)")
     parser.add_argument("--method", type=str, default="BM25", choices=["BM25", "Contriever"],
                         help="Retrieval method to use (BM25 or Contriever). Default is 'BM25'.")
     parser.add_argument("--test_dataset_path", type=str, required=True, default="../data/nq-dev-kilt.jsonl",
