@@ -199,7 +199,9 @@ def define_retrieval_metrics(k_values, metric):
     for k in k_values:
         retrieval_metrics.extend([f'P_{k}', f'success_{k}'])
         if metric != 'f1':
-            retrieval_metrics.extend([f'recall_{k}', f'ndcg_cut_{k}', f'map_{k}', f'recip_rank_{k}'])
+            retrieval_metrics.extend([f'recall_{k}', f'ndcg_cut_{k}', f'map_cut_{k}'])
+    if metric != 'f1':
+        retrieval_metrics.append(f'recip_rank')
     return max(k_values), retrieval_metrics
 
 
@@ -299,13 +301,13 @@ def full_evaluation(args):
 
 if __name__=="__main__":
     parser = argparse.ArgumentParser(description="Evaluation")
-    parser.add_argument("--model_dir", type=str, required=True, default="../models/fid_t5",
+    parser.add_argument("--model_dir", type=str, default="../models/fid_t5",
                         help="Model directory path")
-    parser.add_argument("--k_values", type=int, nargs="+", required=True, default=[50],
+    parser.add_argument("--k_values", type=int, nargs="+", default=[50],
                         help="List of cutoff values to use for metrics computation. (Highiest will be used as number of retrieved docs)")
     parser.add_argument("--method", type=str, default="BM25", choices=["BM25", "Contriever"],
                         help="Retrieval method to use (BM25 or Contriever). Default is 'BM25'.")
-    parser.add_argument("--test_dataset_path", type=str, required=True, default="../data/nq-dev-kilt.jsonl",
+    parser.add_argument("--test_dataset_path", type=str, default="../data/nq-dev-kilt.jsonl",
                         help="Validation file path")
     parser.add_argument("--metric",
                         type=str,
