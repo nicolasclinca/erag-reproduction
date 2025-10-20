@@ -25,8 +25,8 @@ from transformers import T5Tokenizer, T5ForConditionalGeneration
 from data_loader import retrieval_results, load_expected_outputs
 import argparse
 from fid_t5 import t5_fid_generator
-from src.contriever_retriever import DenseRetriever
-from src.metrics import exact_match_metric, f1_metric
+from contriever_retriever import DenseRetriever
+from metrics import exact_match_metric, f1_metric
 
 
 METRICS = {

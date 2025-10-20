@@ -19,10 +19,10 @@ python data_loader.py --datasets ../data/nq-train-kilt.jsonl
 """
 
 import json
-from src.bm25_retriever import bm25_retrieve
+from bm25_retriever import bm25_retrieve
 import argparse
 import os
-from src.contriever_retriever import DenseRetriever
+from contriever_retriever import DenseRetriever
 
 
 def load_expected_outputs(filename):
