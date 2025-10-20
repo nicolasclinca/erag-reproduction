@@ -22,7 +22,6 @@ python bm25_retriever.py
 
 import json
 from pyserini.search.lucene import LuceneSearcher
-from build_indexes import *
 
 
 def bm25_retrieve(query, k=10):
