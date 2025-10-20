@@ -8,7 +8,7 @@ Output: ../data/collection/wikipedia_passages.jsonl
 
 Uso CLI:
 
-Download completo (~5.9M articoli → ~36M passaggi)
+Download completo (~5.9M articoli → ~108M passaggi)
 python preprocess_wikipedia.py
 
 Limita a N record (per test/debug)

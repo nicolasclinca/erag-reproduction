@@ -18,7 +18,6 @@ python data_loader.py --datasets ../data/nq-train-kilt.jsonl
 --batch_size 256
 """
 
-
 import json
 from src.bm25_retriever import bm25_retrieve
 import argparse
