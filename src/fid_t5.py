@@ -415,10 +415,10 @@ def train(args):
 # Generazione (Inferenza)
 # =========================
 def t5_fid_generator(
+    queries_and_documents: Dict[str, List[str]],
     model: T5ForConditionalGeneration,
     tokenizer: T5Tokenizer,
     device: torch.device,
-    queries_and_documents: Dict[str, List[str]],
     max_input_len: int = 256,
     max_output_len: int = 64,
     num_beams: int = 4,
