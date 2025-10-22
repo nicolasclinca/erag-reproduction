@@ -64,10 +64,10 @@ def eval(
         return m_low.startswith("recip_rank_") and len(m_low.split("cut_")) == 2 and m_low.split("cut_")[1].isdigit()
 
     def _top_k_run(run_dict: dict[str, dict[str, float]], k: int) -> dict[str, dict[str, float]]:
-      return {
-          qid: {d: s for d, s in docs.items() if int(d) < k}
-          for qid, docs in run_dict.items()
-      }
+        return {
+            qid: {d: s for d, s in docs.items() if int(d) < k}
+            for qid, docs in run_dict.items()
+        }
 
     recip_rank_metrics = {m for m in retrieval_metrics if _is_recip_rank_k(m)}
     pytrec_metrics = set(retrieval_metrics) - recip_rank_metrics
