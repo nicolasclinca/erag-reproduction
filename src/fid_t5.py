@@ -249,7 +249,7 @@ def train(args):
     model = T5ForConditionalGeneration.from_pretrained(args.model_name)
 
     # Opzioni memoria/stabilità
-    model.config.use_cache = False  # necessario per training corretto
+    model.config.use_cache = False
     if args.grad_checkpointing:
         model.gradient_checkpointing_enable()
 

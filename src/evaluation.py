@@ -17,7 +17,7 @@ Uso CLI:
 import json
 import re
 import torch
-import erag
+import erag_mod
 import os
 import scipy.stats as stats
 from functools import partial
@@ -68,7 +68,7 @@ def evaluation_erag(
     print(f"\nEvaluating using eRAG...")
 
     # Valutazione RAG (retrieval + generazione)
-    erag_results = erag.eval(
+    erag_results = erag_mod.eval(
         retrieval_results=retrieval_results_dict,
         expected_outputs=expected_outputs,
         text_generator=t5_generator_for_eval,
@@ -215,9 +215,9 @@ def define_retrieval_metrics(k_values, metric):
     for k in k_values:
         retrieval_metrics.extend([f'P_{k}', f'success_{k}'])
         if metric != 'f1':
-            retrieval_metrics.extend([f'recall_{k}', f'ndcg_cut_{k}', f'map_cut_{k}'])
-    if metric != 'f1':
-        retrieval_metrics.append(f'recip_rank')
+            retrieval_metrics.extend([f'recall_{k}', f'ndcg_cut_{k}', f'map_cut_{k}', f'recip_rank_cut_{k}'])
+    # if metric != 'f1':
+    #     retrieval_metrics.append(f'recip_rank') # MRR senza cutoff
     return max(k_values), retrieval_metrics
 
 
