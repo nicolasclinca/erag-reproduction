@@ -75,11 +75,6 @@ def augment_datasets(args):
         * Esegue il retrieval (BM25 o Contriever)
         * Salva il dataset arricchito in <same_dir>/<basename>-augmented.json
     """
-    datasets = args.datasets or []
-
-    if not datasets:
-        print("No dataset provided in --datasets.")
-        return
 
     # Istanzia il retriever se usiamo Contriever
     retriever = None
@@ -91,75 +86,47 @@ def augment_datasets(args):
             nprobe=64,
         )
 
-    for dataset_path in datasets:
-        if not dataset_path:
-            continue
-
+    for dataset_path in args.datasets:
         if not os.path.exists(dataset_path):
             print(f"File not found: '{dataset_path}'. Skipped.")
             continue
 
-        try:
-            # Carica query e gold
-            expected_outputs = load_expected_outputs(filename=dataset_path)
-            queries = list(expected_outputs.keys())
-            print(f"Loaded {len(queries)} queries")
+        # Carica query e gold
+        expected_outputs = load_expected_outputs(filename=dataset_path)
+        queries = list(expected_outputs.keys())
+        print(f"Loaded {len(queries)} queries")
 
-            # Retrieval
-            retrieved_results = retrieval_results(
-                queries=queries,
-                method=args.method,
-                k=args.k,
-                retriever=retriever,
-                batch_size=args.batch_size,
-            )
+        # Retrieval
+        retrieved_results = retrieval_results(
+            queries=queries,
+            method=args.method,
+            k=args.k,
+            retriever=retriever,
+            batch_size=args.batch_size,
+        )
 
-            # Augment e salvataggio
-            augmented = augment_with_retrieved_documents(expected_outputs, retrieved_results)
-            dirn = os.path.dirname(dataset_path) or "."
-            base = os.path.splitext(os.path.basename(dataset_path))[0]
-            out_path = os.path.join(dirn, f"{base}-augmented.json")
+        # Augment e salvataggio
+        augmented = augment_with_retrieved_documents(expected_outputs, retrieved_results)
+        dirn = os.path.dirname(dataset_path) or "."
+        base = os.path.splitext(os.path.basename(dataset_path))[0]
+        out_path = os.path.join(dirn, f"{base}-augmented.json")
 
-            with open(out_path, "w", encoding="utf-8") as f:
-                json.dump(augmented, f, indent=4)
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(augmented, f, indent=4)
 
-            print(f"Saved augmented dataset for '{dataset_path}' -> '{out_path}' ({len(augmented)} samples).")
-
-        except Exception as e:
-            print(f"Error during the processing of '{dataset_path}': {e}")
+        print(f"Saved augmented dataset for '{dataset_path}' -> '{out_path}' ({len(augmented)} samples).")
 
 
 if __name__ == "__main__":
-    try:
-        parser = argparse.ArgumentParser(description="Augment datasets with retrieved documents")
-        parser.add_argument(
-            "--datasets",
-            type=str,
-            nargs="+",
-            required=True,
-            help="List of paths to the datasets to process (separated by space)."
-        )
-        parser.add_argument(
-            "--method",
-            type=str,
-            choices=["BM25", "Contriever"],
-            default="BM25",
-            help="Retrieval method (BM25 or Contriever)"
-        )
-        parser.add_argument(
-            "--k",
-            type=int,
-            default=50,
-            help="Number of documents to retrieve for each query (default: 50)"
-        )
-        parser.add_argument(
-            "--batch_size",
-            type=int,
-            default=256,
-            help="Batch size for dense retrieval (default: 256)"
-        )
-        args = parser.parse_args()
-        augment_datasets(args)
-        print("Process completed.")
-    except Exception as e:
-        print(f"Error in creating the augmented dataset: {e}")
+    parser = argparse.ArgumentParser(description="Augment datasets with retrieved documents")
+    parser.add_argument("--datasets", type=str, nargs="+", required=True,
+        help="List of paths to the datasets to process (separated by space).")
+    parser.add_argument("--method", type=str, choices=["BM25", "Contriever"], default="BM25",
+        help="Retrieval method (BM25 or Contriever)")
+    parser.add_argument("--k", type=int, default=50,
+        help="Number of documents to retrieve for each query (default: 50)")
+    parser.add_argument("--batch_size", type=int, default=256,
+        help="Batch size for dense retrieval (default: 256)")
+    args = parser.parse_args()
+    augment_datasets(args)
+    print("Process completed.")

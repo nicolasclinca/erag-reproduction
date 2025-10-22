@@ -289,10 +289,7 @@ if __name__=="__main__":
                         help="Retrieval method to use (BM25 or Contriever). Default is 'BM25'.")
     parser.add_argument("--test_dataset_path", type=str, default="../data/nq-dev-kilt.jsonl",
                         help="Validation file path")
-    parser.add_argument("--metric",
-                        type=str,
-                        default="em",
-                        choices=METRICS.keys(),
+    parser.add_argument("--metric", type=str, default="em", choices=METRICS.keys(),
                         help=f"Evaluation metric to use. Choices: {list(METRICS.keys())}. Default is 'em' (exact_match).")
     args = parser.parse_args()
     full_evaluation(args)
