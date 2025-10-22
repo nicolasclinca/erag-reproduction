@@ -59,11 +59,11 @@ def eval(
                 raise RuntimeError('The returning value of the downstream_metric must be in range [0,1].')
     
     # Helpers
-    def _is_recip_rank_k(m: str) -> bool:
+    def _is_recip_rank_k(m):
         m_low = m.lower()
         return m_low.startswith("recip_rank_") and len(m_low.split("cut_")) == 2 and m_low.split("cut_")[1].isdigit()
 
-    def _top_k_run(run_dict: dict[str, dict[str, float]], k: int) -> dict[str, dict[str, float]]:
+    def _top_k_run(run_dict, k):
         return {
             qid: {d: s for d, s in docs.items() if int(d) < k}
             for qid, docs in run_dict.items()

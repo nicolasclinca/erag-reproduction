@@ -35,17 +35,14 @@ METRICS = {
     "accuracy": exact_match_metric # In our case exact match and accuracy coincide
 }
 
-def save_json_log(data, file_path, description=None):
+def save_json_log(data, file_path, description=""):
     """
     Salva un dizionario in JSON e stampa un messaggio di conferma.
     """
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
     with open(file_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
-    if description:
-        print(f"{description} saved in {file_path}.")
-    else:
-        print(f"Saved in {file_path}.")
+    print(f"{description} saved in {file_path}.")
 
 def _limit_docs_per_query(retrieval_results_dict, k):
     """
@@ -65,7 +62,7 @@ def evaluation_erag(
     log_dir="../logs",
 ):
 
-    print(f"\nEvaluating using eRAG...")
+    print(f"\nEvaluating eRAG scores...")
 
     # Valutazione RAG (retrieval + generazione)
     erag_results = erag_mod.eval(
@@ -102,7 +99,7 @@ def evaluation_e2e(
 
     # Itera su ogni k in k_values e valuta end-to-end limitando i documenti a k
     for k in sorted(set(k_values)):
-        print(f"\nEvaluating end-to-end for k={k}...")
+        print(f"\nEvaluating end-to-end scores for k={k}...")
         # Limita i documenti per query a k
         retrieval_results_topk = _limit_docs_per_query(retrieval_results_dict, k)
 
@@ -135,24 +132,14 @@ def get_correlations(
     erag_results,
     retrieval_metrics,
     all_e2e_scores,
-    test_queries,
     method,
     doc_n,
     log_dir="../logs",
 ):
     def _select_k_key_for_metric(metric_name, fallback):
-        """
-        Dato il nome della metrica (es. 'P_10', 'ndcg_cut_5'),
-        prova a estrarre k. Se non presente, usa fallback.
-        """
         m = re.search(r'(\d+)$', metric_name)
-        if m:
-            k = int(m.group(1))
-        else:
-            k = fallback
-
-        key = f"k_{k}"
-        return key, k
+        k = int(m.group(1)) if m else fallback
+        return f"k_{k}", k
 
     correlations = {}
 
@@ -160,49 +147,27 @@ def get_correlations(
         e2e_key, k_used = _select_k_key_for_metric(metric_name, doc_n)
         e2e_scores_dict = all_e2e_scores[e2e_key]
 
-        aligned_erag_scores = []
-        aligned_e2e_scores = []
+        aligned_erag_scores, aligned_e2e_scores = zip(*[
+            (
+                erag_results['per_input'].get(q, {}).get(metric_name),
+                e2e_scores_dict.get(q)
+            )
+            for q in e2e_scores_dict.keys()
+        ])
 
-        for query_id in test_queries:
-            query_result_dict = erag_results['per_input'].get(query_id, {})
-            erag_score = query_result_dict.get(metric_name)
-            if erag_score is not None:
-                aligned_erag_scores.append(erag_score)
-                aligned_e2e_scores.append(e2e_scores_dict.get(query_id, 0))
-
+        spearman_corr, spearman_p = stats.spearmanr(aligned_erag_scores, aligned_e2e_scores)
+        kendall_corr, kendall_p = stats.kendalltau(aligned_erag_scores, aligned_e2e_scores)
         corr_entry = {
-            "num_pairs": len(aligned_erag_scores),
-            "spearman_corr": None,
-            "spearman_p": None,
-            "kendall_corr": None,
-            "kendall_p": None,
-            "e2e_k_used": k_used,
+            "spearman_corr": spearman_corr,
+            "spearman_p": spearman_p,
+            "kendall_corr": kendall_corr,
+            "kendall_p": kendall_p,
         }
 
-        # Calcolo correlazioni solo se ci sono abbastanza coppie e non sono costanti
-        can_corr = (
-            len(aligned_erag_scores) >= 2 and
-            len(set(aligned_erag_scores)) > 1 and
-            len(set(aligned_e2e_scores)) > 1
-        )
-
-        if can_corr:
-            spearman_corr, spearman_p = stats.spearmanr(aligned_erag_scores, aligned_e2e_scores)
-            kendall_corr, kendall_p = stats.kendalltau(aligned_erag_scores, aligned_e2e_scores)
-            corr_entry.update({
-                "spearman_corr": float(spearman_corr),
-                "spearman_p": float(spearman_p),
-                "kendall_corr": float(kendall_corr),
-                "kendall_p": float(kendall_p),
-            })
-
-            print(f"\nFor metric {metric_name} ({method}, k={k_used}):")
-            print(f"  Spearman correlation: {spearman_corr:.3f} (p={spearman_p:.3f})")
-            print(f"  Kendall correlation:   {kendall_corr:.3f} (p={kendall_p:.3f})")
-        else:
-            print(f"\nFor metric {metric_name} ({method}, k={k_used}):")
-            print("  Spearman correlation: N/A (dati insufficienti o costanti)")
-            print("  Kendall correlation:  N/A (dati insufficienti o costanti)")
+        print(f"\nEvaluated {len(aligned_erag_scores)} pairs.")
+        print(f"For metric {metric_name} ({method}, k={k_used}):")
+        print(f"  Spearman correlation: {spearman_corr:.3f} (p={spearman_p:.3f})")
+        print(f"  Kendall correlation:   {kendall_corr:.3f} (p={kendall_p:.3f})")
 
         correlations[metric_name] = corr_entry
 
@@ -300,15 +265,14 @@ def full_evaluation(args):
         erag_results=erag_results,
         retrieval_metrics=retrieval_metrics,
         all_e2e_scores=all_e2e_scores,
-        test_queries=test_queries,
         method=args.method,
         doc_n=doc_n,
         log_dir=LOG_DIR
     )
 
     return {
-        "erag_results": erag_results,
         "retrieval_metrics": retrieval_metrics,
+        "erag_results": erag_results,
         "all_e2e_scores": all_e2e_scores,
         "e2e_average_scores": average_e2e_scores,
         "correlations": correlations,
