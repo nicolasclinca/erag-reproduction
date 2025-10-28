@@ -15,9 +15,6 @@ python -m pyserini.index.lucene
 -generator DefaultLuceneDocumentGenerator
 -threads 8
 -storePositions -storeDocvectors -storeRaw
-
-Uso CLI (esempio):
-python bm25_retriever.py
 """
 
 import json
@@ -43,14 +40,3 @@ def bm25_retrieve(query, k=10):
         top_contents.append(passages)
 
     return top_contents
-
-def main():
-    query = "what is gravitational time dilation?"
-    print(f"BM25 example with query: {query}")
-    docs= bm25_retrieve(query, k=5)
-    for doc in docs:
-        print(f"Text: {doc[:400]}...")
-    
-    
-if __name__=="__main__":
-    main()

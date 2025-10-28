@@ -181,8 +181,6 @@ def define_retrieval_metrics(k_values, metric):
         retrieval_metrics.extend([f'P_{k}', f'success_{k}'])
         if metric != 'f1':
             retrieval_metrics.extend([f'recall_{k}', f'ndcg_cut_{k}', f'map_cut_{k}', f'recip_rank_cut_{k}'])
-    # if metric != 'f1':
-    #     retrieval_metrics.append(f'recip_rank') # MRR senza cutoff
     return max(k_values), retrieval_metrics
 
 
