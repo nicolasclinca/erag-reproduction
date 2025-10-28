@@ -1,6 +1,16 @@
+"""
+erag_mod.py
+Valuta la qualità del retrieval usando metriche IR (P@k, recall, nDCG, MRR, etc.)
+con rilevanza determinata dalla performance downstream (EM, F1, etc.) su ogni documento.
+
+1. Per ogni query-doc: genera risposta con solo quel documento
+2. Calcola score downstream (EM/F1) → label di rilevanza [0,1]
+3. Costruisce qrel (gold relevance) e run (ranking)
+4. Calcola metriche IR tramite pytrec_eval
+"""
+
 from typing import Dict, Callable, List, Union, Set
 import pytrec_eval
-import json
 
 
 def eval(
@@ -13,6 +23,31 @@ def eval(
     ):
     """
     This function returns the eRAG score as explained in "[link to paper]"
+
+    Args:
+        retrieval_results ('Dict[str, List[str]]'):
+            A dictionary that the key is the text input and the value is a list of 
+            retrieval results in 'str' format that should be evaluated.
+        
+        expected_outputs ('Dict[str, List[str]]'):
+            A dictionary that the key is the text input and the value is a list of the expected
+            output that the 'text_generator' function should generate for that input.
+                    
+        text_generator ('Callable[[Dict[str, List[str]]], Dict[str, str]]'):
+            A callable object that takes a dictionary of textual input to retrieval list and 
+            generates dictionary of textual input to corresponding output.
+                    
+        downstream_metric ('Callable[[Dict[str, str], Dict[str, List[str]]], Dict[str, Union[int, float]]]'):
+            A callable object that takes a dictonary of textual inputs to the corresponding prediction text as the first argument 
+            and a dictionary of the textual inputs to corresponding list of gold outputs as the second argument,
+            and generates a score based on them for the prediction text. The generated score should be in range [0, 1].
+
+        retrieval_metrics ('Set[str]'):
+            The set of Information Retrieval metrics should be used to evaluate the retrieval results. 
+            We follow the same format as pytrec_eval library for deifning metrics: "https://github.com/cvangysel/pytrec_eval"
+    
+    Returns:
+        A dictionary containing the per input eRAG score the and aggregated eRAG score.
     """
 
     assert set(retrieval_results.keys()) == set(expected_outputs.keys()), 'The keys in retrieval results and expected outputs do not match.'
