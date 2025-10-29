@@ -33,6 +33,7 @@ class JsonlCollection:
         self.path = path
         self.in_memory = in_memory
         self._docs = None
+        self._f = None
         self._off_f = None
         self._off_mm = None
         self._off_count = 0
@@ -48,9 +49,11 @@ class JsonlCollection:
                     except Exception: docs.append("")
             self._docs = docs
         elif offsets_path and os.path.exists(offsets_path):
+            # apri e mappa gli offsets, e tieni aperto anche l'handle del file JSONL
             self._off_f = open(offsets_path, "rb")
             self._off_mm = mmap.mmap(self._off_f.fileno(), 0, access=mmap.ACCESS_READ)
             self._off_count = len(self._off_mm) // 8  # uint64 per riga
+            self._f = open(self.path, "rb")
 
     def _offset_at(self, i: int) -> int:
         return struct.unpack_from("<Q", self._off_mm, i * 8)[0]
@@ -60,9 +63,9 @@ class JsonlCollection:
             return [self._docs[i] if 0 <= i < len(self._docs) else "" for i in ids]
 
         out = []
-        with open(self.path, "rb") as f:
-            if self._off_mm is None:
-                # fallback lento senza offsets
+        if self._off_mm is None:
+            # fallback lento senza offsets: apri/chiudi il file ad ogni chiamata
+            with open(self.path, "rb") as f:
                 max_id = max(ids) if ids else -1
                 wanted = set(ids)
                 got = {}
@@ -73,18 +76,44 @@ class JsonlCollection:
                         except Exception: got[i] = ""
                     if i >= max_id: break
                 for i in ids: out.append(got.get(i, ""))
-                return out
-            # con offsets (veloce)
-            for i in ids:
-                if i < 0 or i >= self._off_count:
-                    out.append(""); continue
-                f.seek(self._offset_at(i))
-                line = f.readline()
-                try:
-                    rec = json.loads(line.decode("utf-8")); out.append(rec.get("contents",""))
-                except Exception:
-                    out.append("")
+            return out
+
+        if self._f is None or self._f.closed:
+            self._f = open(self.path, "rb")
+
+        f = self._f
+        for i in ids:
+            if i < 0 or i >= self._off_count:
+                out.append(""); continue
+            f.seek(self._offset_at(i))
+            line = f.readline()
+            try:
+                rec = json.loads(line.decode("utf-8")); out.append(rec.get("contents",""))
+            except Exception:
+                out.append("")
         return out
+    
+    def close(self) -> None:
+        # chiudi in ordine: mmap -> file offsets -> file collection
+        if self._off_mm is not None:
+            try: self._off_mm.close()
+            except Exception: pass
+            self._off_mm = None
+        if self._off_f is not None:
+            try: self._off_f.close()
+            except Exception: pass
+            self._off_f = None
+        if self._f is not None:
+            try: self._f.close()
+            except Exception: pass
+            self._f = None
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
 
 # --------- Contriever Encoder (query) ---------
 class ContrieverEncoder:
