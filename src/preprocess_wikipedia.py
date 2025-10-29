@@ -13,9 +13,12 @@ python preprocess_wikipedia.py
 
 Limita a N record (per test/debug)
 python preprocess_wikipedia.py --max_record 10000
+
+Con throttling e buffer personalizzato
+python preprocess_wikipedia.py --buffer_size 1000000 --throttle
 """
 
-import ujson as json
+import json
 import argparse
 import time
 import requests
@@ -59,18 +62,20 @@ def process_kilt_page(page_json, max_words=100):
     return docs
 
 
-def process_source_request(url, out_path, args, buffer_size=2_000_000):
+def process_source_request(url, out_path, args):
     """
     Process an entire dataset from an Internet source
-    :param in_path: link to the dataset
+    :param url: link to the dataset
     :param out_path: path to the output file
-    :param buffer_size: size of the buffer to speed up the procedure (default: 2 Millions)
-    :param max_records: limit to the number of records to be processed; if 0 (default value), there is no limit
+    :param args: argparse arguments containing buffer_size, max_record, and throttle
     :return: number of processed records
     """
     
     processed = 0
     max_records = args.max_record
+    buffer_size = args.buffer_size
+    throttle = args.throttle
+    
     with (requests.get(url, stream=True, timeout=10) as in_file,
             open(out_path, 'w', encoding='utf-8') as out_file):
         in_file.raise_for_status()
@@ -97,7 +102,8 @@ def process_source_request(url, out_path, args, buffer_size=2_000_000):
                 buffer = []
                 print(f"\n+++ Buffer emptied: {processed} record processed +++\n")
                 
-                time.sleep(0.5)
+                if throttle:
+                    time.sleep(0.5)
 
         for doc in buffer:
             json.dump(doc, out_file)
@@ -119,5 +125,9 @@ if __name__=="__main__":
     parser = argparse.ArgumentParser(description="Preprocess Wikipedia Dump")
     parser.add_argument("--max_record", type=int, default=0,
                         help="Number of record taken from the Wikipedia Dump (for smaller wikipedia dump). Default is 0 (no limit).")
+    parser.add_argument("--buffer_size", type=int, default=500000,
+                        help="Size of the buffer before writing to disk. Default is 500000.")
+    parser.add_argument("--throttle", action="store_true",
+                        help="Enable throttling (sleep 0.5s after each buffer flush).")
     args = parser.parse_args()
     process_source_request(url, output_path, args)
