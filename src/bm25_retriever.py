@@ -18,6 +18,7 @@ python -m pyserini.index.lucene
 """
 
 import json
+from typing import List, Dict
 from pyserini.search.lucene import LuceneSearcher
 
 
@@ -38,3 +39,37 @@ def bm25_retrieve(query, k=10):
         top_contents.append(jsondoc["contents"])
 
     return top_contents
+
+
+def bm25_batch_retrieve(
+    queries: List[str],
+    k: int = 50,
+    batch_size: int = 256
+) -> Dict[str, List[str]]:
+    """
+    Execute batch search using Okapi BM25 for multiple queries
+    :param queries: list of user queries
+    :param k: number of passages to retrieve per query
+    :param batch_size: number of queries to process in parallel
+    :return: dictionary mapping each query to its list of top document contents
+    """
+    searcher = LuceneSearcher('../indexes/bm25_index')
+    results = {}
+    
+    for i in range(0, len(queries), batch_size):
+        batch = queries[i:i + batch_size]
+        
+        batch_hits = searcher.batch_search(batch, qids=[str(j) for j in range(len(batch))], k=k, threads=8)
+        
+        for idx, query in enumerate(batch):
+            qid = str(idx)
+            hits = batch_hits.get(qid, [])
+            
+            top_contents = []
+            for hit in hits:
+                jsondoc = json.loads(hit.raw)
+                top_contents.append(jsondoc["contents"])
+            
+            results[query] = top_contents
+    
+    return results

@@ -19,7 +19,7 @@ python data_loader.py --datasets ../data/nq-train-kilt.jsonl
 """
 
 import json
-from bm25_retriever import bm25_retrieve
+from bm25_retriever import bm25_batch_retrieve
 import argparse
 import os
 from contriever_retriever import DenseRetriever
@@ -44,7 +44,7 @@ def retrieval_results(queries, method='BM25', k=50, retriever=None, batch_size=2
     Restituisce {query: [doc1, doc2, ..., dock]}.
     """
     if method == 'BM25':
-        return {query: bm25_retrieve(query, k=k) for query in queries}
+        return bm25_batch_retrieve(queries, k=k, batch_size=batch_size)
     elif method == 'Contriever':
         return retriever.contriever_batch_retrieve(queries=queries, k=k, batch_size=batch_size)
     else:
