@@ -137,15 +137,17 @@ class DenseRetriever:
         docs = self.collection.get_many(ids)
         out = {"ids": ids, "distances_l2": dists, "documents": docs}
         if return_cosine:
-            out["cosine_sim"] = [1.0 - 0.5 * d for d in dists]
+            out["approx_cosine"] = [1.0 - 0.5 * d for d in dists]
         return out
 
-    def batch_dense_retrieve(self, queries: List[str], k: int = 5, return_cosine: bool = True) -> List[Dict]:
-        Q = self.encoder.encode(queries, batch_size=min(64, max(1, 8))).astype(np.float32)
+    def batch_dense_retrieve(self, queries: List[str], k: int = 5, batch_size: int = 8, return_cosine: bool = True) -> List[Dict]:
+        Q = self.encoder.encode(queries, batch_size=min(64, max(1, batch_size))).astype(np.float32)
         D, I = self.index.search(Q, k)
+        
         # fetch in blocco
         unique_ids = sorted(set(int(x) for row in I for x in row))
         id2doc = dict(zip(unique_ids, self.collection.get_many(unique_ids)))
+        
         results = []
         for i in range(len(queries)):
             ids = [int(x) for x in I[i]]
@@ -153,8 +155,9 @@ class DenseRetriever:
             docs = [id2doc[j] for j in ids]
             obj = {"ids": ids, "distances_l2": dists, "documents": docs}
             if return_cosine:
-                obj["cosine_sim"] = [1.0 - 0.5 * d for d in dists]
+                obj["approx_cosine"] = [1.0 - 0.5 * d for d in dists]
             results.append(obj)
+        
         return results
     
     def contriever_batch_retrieve(
