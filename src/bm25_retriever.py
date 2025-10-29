@@ -31,12 +31,10 @@ def bm25_retrieve(query, k=10):
     searcher = LuceneSearcher('../indexes/bm25_index')
     hits = searcher.search(query, k=k)
 
-    passages = []
     top_contents = []
 
-    for i in range(len(hits)):
-        jsondoc = json.loads(hits[i].lucene_document.get('raw'))
-        passages = (jsondoc["contents"])
-        top_contents.append(passages)
+    for hit in hits:
+        jsondoc = json.loads(hit.raw)
+        top_contents.append(jsondoc["contents"])
 
     return top_contents
