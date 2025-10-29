@@ -147,9 +147,10 @@ class ContrieverEncoder:
                         for k,v in inputs_cpu.items()}
                 with torch.amp.autocast(device_type='cuda', dtype=self.dtype, enabled=(self.device.type=="cuda")):
                     x = self.model(**inputs).last_hidden_state
-                    mask = inputs["attention_mask"].to(x.dtype).unsqueeze(-1)
-                    mean = (x * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1e-6)
-                    norm = F.normalize(mean.float(), p=2, dim=1) # normalizza in fp32
+                x = x.float()
+                mask = inputs["attention_mask"].to(x.dtype).unsqueeze(-1)
+                mean = (x * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1e-6)
+                norm = F.normalize(mean, p=2, dim=1)
                 batch_np = norm.cpu().numpy().astype(np.float32, copy=False)
                 n = batch_np.shape[0]
                 out[off:off+n] = batch_np
@@ -172,6 +173,8 @@ def autotune_batch_size(encoder: ContrieverEncoder, input_jsonl: str, tune_docs:
                 torch.cuda.reset_peak_memory_stats()
             t0 = time.time()
             _ = encoder.encode_with(sample, batch_size=bs)  # embeddings scartati
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
             dt = time.time() - t0
             docs_s = len(sample) / max(1e-9, dt)
             peak = (torch.cuda.max_memory_allocated() / (1024**3)) if torch.cuda.is_available() else 0.0
@@ -207,25 +210,30 @@ def autotune_batch_size(encoder: ContrieverEncoder, input_jsonl: str, tune_docs:
 def build_training_matrix(input_jsonl: str, encoder: ContrieverEncoder, train_size: int,
                           block_docs: int, bs: int) -> np.ndarray:
     log(f"[train] Building training set in RAM: target={train_size:,} | bs={bs}")
-    blocks = []; total = 0; t0 = time.time(); buf = []
+    X = np.empty((train_size, encoder.D), dtype=np.float32)
+    total, t0, buf = 0, time.time(), []
     for rec in iter_jsonl(input_jsonl):
         c = rec.get("contents", "").strip()
-        if not c: continue
+        if not c: 
+            continue
         buf.append(c)
         if len(buf) >= block_docs:
             xb = encoder.encode_with(buf, batch_size=bs)
             take = min(train_size - total, xb.shape[0])
             if take > 0:
-                blocks.append(xb[:take].astype(np.float32, copy=False)); total += take
+                X[total:total+take] = xb[:take]
+                total += take
             buf = []
-            if total >= train_size: break
-            if total % 100_000 == 0:
+            if total >= train_size:
+                break
+            if total and total % 100_000 == 0:
                 log(f"[train] Encoded {total:,}/{train_size:,} in {(time.time()-t0)/60:.1f} min")
     if buf and total < train_size:
         xb = encoder.encode_with(buf, batch_size=bs)
         take = min(train_size - total, xb.shape[0])
-        blocks.append(xb[:take].astype(np.float32, copy=False)); total += take
-    X = np.vstack(blocks) if blocks else np.empty((0, encoder.D), dtype=np.float32)
+        X[total:total+take] = xb[:take]
+        total += take
+    X = X[:total]
     log(f"[train] Done: {X.shape[0]:,} vectors | {(time.time()-t0)/60:.1f} min")
     return X
 
@@ -408,12 +416,19 @@ def main():
     # Encoder (unico, riusato per tuning/train/add)
     encoder = ContrieverEncoder(MODEL_NAME, device, MAX_LENGTH, DTYPE)
 
-    # 1) Tuning bs (opzionale)
+    # 1) FAISS threads per add
+    try:
+        faiss.omp_set_num_threads(os.cpu_count() or 4)
+        log(f"[faiss] Using {os.cpu_count()} CPU threads")
+    except Exception:
+        pass
+
+    # 2) Tuning bs (opzionale)
     best_bs = args.batch_size
     if args.tune:
         best_bs = autotune_batch_size(encoder, args.input_jsonl, tune_docs=args.tune_docs, candidates=TUNE_CANDIDATES)
 
-    # 2) Costruisci o carica indice
+    # 3) Costruisci o carica indice
     index_path = os.path.join(args.out_dir, INDEX_FILENAME)
     index_exists = args.resume and os.path.exists(index_path)
 
@@ -428,13 +443,6 @@ def main():
                                         block_docs=args.train_block_docs, bs=best_bs)
         index = build_or_load_index(X_train, args.out_dir, args.nlist, args.m, args.nbits, args.nprobe,
                                     index_filename=INDEX_FILENAME, resume=args.resume)
-
-    # 3) FAISS threads per add
-    try:
-        faiss.omp_set_num_threads(os.cpu_count() or 4)
-        log(f"[faiss] Using {os.cpu_count()} CPU threads")
-    except Exception:
-        pass
 
     # 4) Add streaming con checkpoint opzionali
     added = add_streaming(args.input_jsonl, args.out_dir, index, encoder, args.add_block, INDEX_FILENAME,
