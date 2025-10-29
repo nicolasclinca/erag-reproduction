@@ -179,6 +179,7 @@ def define_retrieval_metrics(k_values, metric):
     retrieval_metrics = []
     for k in k_values:
         retrieval_metrics.extend([f'P_{k}', f'success_{k}'])
+        # Siccome f1 restituisce label di rilevanza non binarie, non è possibile calcolare recall, ndcg, map, recip_rank
         if metric != 'f1':
             retrieval_metrics.extend([f'recall_{k}', f'ndcg_cut_{k}', f'map_cut_{k}', f'recip_rank_cut_{k}'])
     return max(k_values), retrieval_metrics
