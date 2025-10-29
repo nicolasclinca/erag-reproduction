@@ -287,13 +287,17 @@ def add_streaming(input_jsonl: str, out_dir: str, index: faiss.IndexIDMap2,
     buf = []
     block_idx = 0
 
-    it = iter_jsonl(input_jsonl, start_line=next_id)
+    skipped = 0
+    it = iter_jsonl(input_jsonl)
     for rec in it:
         c = rec.get("contents", "").strip()
         if not c:
             continue
-        buf.append(c)
+        if skipped < next_id:
+            skipped += 1
+            continue
 
+        buf.append(c)
         if len(buf) >= add_block:
             xb = encoder.encode_with(buf, batch_size=bs)
             n = xb.shape[0]
@@ -336,16 +340,45 @@ def add_streaming(input_jsonl: str, out_dir: str, index: faiss.IndexIDMap2,
     return total_added
 
 # ---------------- Meta ----------------
-def write_meta(out_dir: str, input_jsonl: str, index_filename: str, best_bs: int, d: int):
+def write_meta(out_dir: str, input_jsonl: str, index_filename: str, best_bs: int, d: int,
+               nlist: int, nprobe: int, m: int, nbits: int):
     meta = {
         "collection_path": os.path.abspath(input_jsonl),
         "index_path": os.path.abspath(os.path.join(out_dir, index_filename)),
         "tuned_batch_size": best_bs,
-        "m": M, "nbits": NBITS, "nlist": NLIST, "nprobe": NPROBE,
+        "m": m, "nbits": nbits, "nlist": nlist, "nprobe": nprobe,
         "dim": d, "encoder": MODEL_NAME, "max_length": MAX_LENGTH,
     }
     with open(os.path.join(out_dir, META_FILENAME), "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
+
+
+def get_index_params_from_faiss(index: faiss.Index) -> dict:
+    """
+    Estrae nlist, nprobe, M, nbits dal vero indice FAISS anche quando è wrappato
+    da IDMap2 e/o IndexPreTransform (OPQ).
+    """
+    core = index
+    # Unwrap IDMap
+    if isinstance(core, (faiss.IndexIDMap, faiss.IndexIDMap2)) and hasattr(core, "index"):
+        core = core.index
+    # Unwrap PreTransform (OPQ + IVF-PQ)
+    if isinstance(core, faiss.IndexPreTransform) and hasattr(core, "index"):
+        core = core.index
+
+    params = {
+        "nlist": int(getattr(core, "nlist", 0)),
+        "nprobe": int(getattr(core, "nprobe", 0)),
+        "m": None,
+        "nbits": None,
+    }
+    # IVFPQ espone .pq con M e nbits
+    if hasattr(core, "pq"):
+        params["m"] = int(getattr(core.pq, "M", 0))
+        params["nbits"] = int(getattr(core.pq, "nbits", 0))
+    elif hasattr(core, "M"):
+        params["m"] = int(getattr(core, "M", 0))
+    return params
 
 # ---------------- Main ----------------
 def main():
@@ -380,22 +413,30 @@ def main():
     if args.tune:
         best_bs = autotune_batch_size(encoder, args.input_jsonl, tune_docs=args.tune_docs, candidates=TUNE_CANDIDATES)
 
-    # 2) Training set in RAM con la migliore combinazione
-    X_train = build_training_matrix(args.input_jsonl, encoder, args.train_size,
-                                    block_docs=args.train_block_docs, bs=best_bs)
+    # 2) Costruisci o carica indice
+    index_path = os.path.join(args.out_dir, INDEX_FILENAME)
+    index_exists = args.resume and os.path.exists(index_path)
 
-    # 3) Build/Load index
-    index = build_or_load_index(X_train, args.out_dir, args.nlist, args.m, args.nbits, args.nprobe,
-                                index_filename=INDEX_FILENAME, resume=args.resume)
+    if index_exists:
+        # Carica direttamente l’indice
+        index = build_or_load_index(np.empty((0, encoder.D), dtype=np.float32),
+                                    args.out_dir, args.nlist, args.m, args.nbits, args.nprobe,
+                                    index_filename=INDEX_FILENAME, resume=True)
+    else:
+        # Costruisci training set e indice da zero
+        X_train = build_training_matrix(args.input_jsonl, encoder, args.train_size,
+                                        block_docs=args.train_block_docs, bs=best_bs)
+        index = build_or_load_index(X_train, args.out_dir, args.nlist, args.m, args.nbits, args.nprobe,
+                                    index_filename=INDEX_FILENAME, resume=args.resume)
 
-    # 4) FAISS threads per add
+    # 3) FAISS threads per add
     try:
         faiss.omp_set_num_threads(os.cpu_count() or 4)
         log(f"[faiss] Using {os.cpu_count()} CPU threads")
     except Exception:
         pass
 
-    # 5) Add streaming con checkpoint opzionali
+    # 4) Add streaming con checkpoint opzionali
     added = add_streaming(args.input_jsonl, args.out_dir, index, encoder, args.add_block, INDEX_FILENAME,
                           bs=best_bs, checkpoint_every=args.checkpoint_every)
     log(f"[done] ntotal={index.ntotal:,} | added_now={added:,}")
@@ -403,6 +444,8 @@ def main():
     # Salvataggio finale su disco (al termine)
     faiss.write_index(index, os.path.join(args.out_dir, INDEX_FILENAME))
 
-    # 6) Meta
-    write_meta(args.out_dir, args.input_jsonl, INDEX_FILENAME, best_bs, index.d)
-    log("[save] Meta written.")
+    # 5) Meta
+    idx_params = get_index_params_from_faiss(index)
+    write_meta(args.out_dir, args.input_jsonl, INDEX_FILENAME, best_bs, index.d,
+               nlist=idx_params["nlist"], nprobe=idx_params["nprobe"],
+               m=idx_params["m"], nbits=idx_params["nbits"])
