@@ -5,13 +5,13 @@ Costruisce un indice OPQ+IVF-PQ (Contriever) partendo da una collezione preproce
 prosegue automaticamente con la combinazione migliore.
 
 Requisiti:
-  pip install faiss-cpu transformers
+  pip install torch faiss-cpu transformers
 
 Uso CLI:
   python build_contriever_indexes.py --input_jsonl ../data/collection/wikipedia_passages.jsonl \
                           --out_dir ./index_out_full \
                           --tune --tune_docs 100000 \
-                          --train_size 1500000 \
+                          --train_size 3000000 \
                           --resume
 """
 
@@ -279,43 +279,90 @@ def add_streaming(input_jsonl: str, out_dir: str, index: faiss.IndexIDMap2,
                   encoder: ContrieverEncoder, add_block: int, index_filename: str,
                   bs: int, checkpoint_every: int = 0) -> int:
     """
-    Aggiunge documenti all'indice in streaming.
+    Aggiunge documenti all'indice in streaming utilizzando gli ID originali dal JSONL.
+    Il resume avviene saltando i primi `index.ntotal` documenti validi (non vuoti) del JSONL.
     Scrive su disco solo ogni `checkpoint_every` blocchi; se <= 0 non fa checkpoint periodici.
     Il salvataggio finale è demandato al chiamante (main).
     """
+    import hashlib
     index_path = os.path.join(out_dir, index_filename)
+
+    # Numero di vettori già presenti nell'indice (per il resume)
     try:
-        next_id = index.ntotal
+        already_indexed = int(index.ntotal)
     except Exception:
-        next_id = 0
-    log(f"[add] Resume at next_id={next_id:,} | bs={bs} | ckpt_every={checkpoint_every}")
+        already_indexed = 0
+    log(f"[add] Resume at next_id={already_indexed:,} | bs={bs} | ckpt_every={checkpoint_every}")
 
     total_added = 0
     t0 = time.time()
-    buf = []
+    buf_docs: List[str] = []
+    buf_ids: List[int] = []
     block_idx = 0
 
-    skipped = 0
+    # Numero di documenti validi (non vuoti) visti dal JSONL
+    processed_valid = 0
+
+    def to_faiss_id(raw_id, fallback: int) -> int:
+        # Id numerico
+        if isinstance(raw_id, (int, np.integer)):
+            return int(raw_id)
+
+        # Id stringa
+        if isinstance(raw_id, str):
+            s = raw_id.strip()
+            # Stringa numerica
+            if s and (s.isdigit() or (s[0] == '-' and s[1:].isdigit())):
+                try:
+                    return int(s)
+                except Exception:
+                    pass
+            # Hash deterministico 64-bit per stringhe non numeriche
+            h = hashlib.sha1(s.encode("utf-8")).digest()
+            val = int.from_bytes(h[:8], byteorder="little", signed=False)
+            val &= (1 << 63) - 1  # forza positivo
+            return int(val)
+
+        if raw_id is None:
+            return int(fallback)
+
+        try:
+            return int(raw_id)
+        except Exception:
+            return int(fallback)
+
     it = iter_jsonl(input_jsonl)
     for rec in it:
-        c = rec.get("contents", "").strip()
+        c = rec.get("contents", "")
+        if not isinstance(c, str):
+            c = str(c) if c is not None else ""
+        c = c.strip()
         if not c:
             continue
-        if skipped < next_id:
-            skipped += 1
+
+        # Skip per resume: salta i primi 'already_indexed' documenti validi
+        if processed_valid < already_indexed:
+            processed_valid += 1
             continue
 
-        buf.append(c)
-        if len(buf) >= add_block:
-            xb = encoder.encode_with(buf, batch_size=bs)
+        # Fallback id basato sulla posizione globale del documento
+        fallback_id = processed_valid
+        rid = to_faiss_id(rec.get("id", None), fallback=fallback_id)
+
+        buf_docs.append(c)
+        buf_ids.append(rid)
+        processed_valid += 1
+
+        if len(buf_docs) >= add_block:
+            xb = encoder.encode_with(buf_docs, batch_size=bs)
             n = xb.shape[0]
             if n:
-                ids = (np.arange(n, dtype=np.int64) + next_id)
+                ids = np.asarray(buf_ids[:n], dtype=np.int64)
                 index.add_with_ids(np.ascontiguousarray(xb, dtype=np.float32), ids)
-                next_id += n
                 total_added += n
                 block_idx += 1
-            buf = []
+            buf_docs.clear()
+            buf_ids.clear()
 
             if checkpoint_every > 0 and (block_idx % checkpoint_every == 0):
                 faiss.write_index(index, index_path)
@@ -327,15 +374,16 @@ def add_streaming(input_jsonl: str, out_dir: str, index: faiss.IndexIDMap2,
             rate = total_added / max(1e-9, elapsed)
             log(f"[add] Added {total_added:,} | {rate:.1f} docs/s | elapsed {elapsed/60:.1f} min")
 
-    if buf:
-        xb = encoder.encode_with(buf, batch_size=bs)
+    # Flush finale
+    if buf_docs:
+        xb = encoder.encode_with(buf_docs, batch_size=bs)
         n = xb.shape[0]
         if n:
-            ids = (np.arange(n, dtype=np.int64) + next_id)
+            ids = np.asarray(buf_ids[:n], dtype=np.int64)
             index.add_with_ids(np.ascontiguousarray(xb, dtype=np.float32), ids)
-            next_id += n
             total_added += n
             block_idx += 1
+
             if checkpoint_every > 0 and (block_idx % checkpoint_every == 0):
                 faiss.write_index(index, index_path)
                 elapsed = time.time() - t0
@@ -454,6 +502,9 @@ def main():
 
     # 5) Meta
     idx_params = get_index_params_from_faiss(index)
-    write_meta(args.out_dir, args.input_jsonl, INDEX_FILENAME, best_bs, index.d,
+    write_meta(args.out_dir, args.input_jsonl, INDEX_FILENAME, best_bs, encoder.D,
                nlist=idx_params["nlist"], nprobe=idx_params["nprobe"],
                m=idx_params["m"], nbits=idx_params["nbits"])
+    
+if __name__ == "__main__":
+    main()
