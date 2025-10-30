@@ -26,6 +26,7 @@ from data_loader import retrieval_results, load_expected_outputs
 import argparse
 from fid_t5 import t5_fid_generator
 from contriever_retriever import DenseRetriever
+from pyserini.search.lucene import LuceneSearcher
 from metrics import exact_match_metric, f1_metric
 
 
@@ -204,7 +205,9 @@ def full_evaluation(args):
     # 3) Retrieval sui dati di test
     print(f"Retrieving {doc_n} documents per query using: {args.method}")
     retriever = None
-    if args.method == 'Contriever':
+    if args.method == 'BM25':
+        retriever = LuceneSearcher('../indexes/bm25_index')
+    elif args.method == 'Contriever':
         retriever = DenseRetriever(
             index_path="./index_out_full/ivfpq_opq_contriever.faiss",
             collection_path="../data/collection/wikipedia_passages.jsonl",

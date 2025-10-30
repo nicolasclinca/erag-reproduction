@@ -22,14 +22,13 @@ from typing import List, Dict
 from pyserini.search.lucene import LuceneSearcher
 
 
-def bm25_retrieve(query, k=10):
+def bm25_retrieve(query, searcher: LuceneSearcher = None, k=10):
     """
     Execute the search using Okapi BM25 implemented by PySerini
     :param query: user query
     :param k: number of passages to retrieve
     :return: list of top documents (passages)
     """
-    searcher = LuceneSearcher('../indexes/bm25_index')
     hits = searcher.search(query, k=k)
 
     top_contents = []
@@ -42,10 +41,11 @@ def bm25_retrieve(query, k=10):
 
 
 def bm25_batch_retrieve(
-    queries: List[str],
-    k: int = 50,
-    batch_size: int = 256
-) -> Dict[str, List[str]]:
+        queries: List[str],
+        searcher: LuceneSearcher = None,
+        k: int = 50,
+        batch_size: int = 256
+    ) -> Dict[str, List[str]]:
     """
     Execute batch search using Okapi BM25 for multiple queries
     :param queries: list of user queries
@@ -53,7 +53,6 @@ def bm25_batch_retrieve(
     :param batch_size: number of queries to process in parallel
     :return: dictionary mapping each query to its list of top document contents
     """
-    searcher = LuceneSearcher('../indexes/bm25_index')
     results = {}
     
     for i in range(0, len(queries), batch_size):

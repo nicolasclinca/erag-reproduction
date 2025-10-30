@@ -23,6 +23,7 @@ from bm25_retriever import bm25_batch_retrieve
 import argparse
 import os
 from contriever_retriever import DenseRetriever
+from pyserini.search.lucene import LuceneSearcher
 
 
 def load_expected_outputs(filename):
@@ -44,7 +45,7 @@ def retrieval_results(queries, method='BM25', k=50, retriever=None, batch_size=2
     Restituisce {query: [doc1, doc2, ..., dock]}.
     """
     if method == 'BM25':
-        return bm25_batch_retrieve(queries, k=k, batch_size=batch_size)
+        return bm25_batch_retrieve(queries, searcher=retriever, k=k, batch_size=batch_size)
     elif method == 'Contriever':
         return retriever.contriever_batch_retrieve(queries=queries, k=k, batch_size=batch_size)
     else:
@@ -76,9 +77,11 @@ def augment_datasets(args):
         * Salva il dataset arricchito in <same_dir>/<basename>-augmented.json
     """
 
-    # Istanzia il retriever se usiamo Contriever
+    # Istanzia il retriever
     retriever = None
-    if args.method == 'Contriever':
+    if args.method == 'BM25':
+        retriever = LuceneSearcher('../indexes/bm25_index')
+    elif args.method == 'Contriever':
         retriever = DenseRetriever(
             index_path="./index_out_full/ivfpq_opq_contriever.faiss",
             collection_path="../data/collection/wikipedia_passages.jsonl",
