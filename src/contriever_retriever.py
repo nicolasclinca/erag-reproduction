@@ -17,14 +17,13 @@ from typing import List, Dict, Optional
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 import faiss
-from transformers import AutoTokenizer, AutoModel
 import mmap, struct
+from contriever_encoder import (
+    ContrieverEncoder, MODEL_NAME, MAX_LENGTH, DTYPE
+)
 
-MODEL_NAME = "facebook/contriever"
-MAX_LENGTH = 200
-DTYPE = torch.float16
+
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # --------- JSONL collection with optional offsets ---------
@@ -114,33 +113,6 @@ class JsonlCollection:
         except Exception:
             pass
 
-
-# --------- Contriever Encoder (query) ---------
-class ContrieverEncoder:
-    def __init__(self, model_name=MODEL_NAME, device=DEVICE, max_length=MAX_LENGTH, dtype=DTYPE):
-        self.device = device; self.max_length = max_length; self.dtype = dtype
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
-        self.model = AutoModel.from_pretrained(model_name).to(device); self.model.eval()
-        torch.backends.cuda.matmul.allow_tf32 = True
-        try: torch.set_float32_matmul_precision("high")
-        except Exception: pass
-
-    def encode(self, texts: List[str], batch_size: int = 64) -> np.ndarray:
-        vecs = []
-        with torch.inference_mode():
-            for i in range(0, len(texts), batch_size):
-                batch = texts[i:i+batch_size]
-                inputs = self.tokenizer(batch, padding=True, truncation=True, max_length=self.max_length, return_tensors="pt")
-                inputs = {k: v.to(self.device, non_blocking=True) for k, v in inputs.items()}
-                with torch.amp.autocast(device_type='cuda', dtype=self.dtype, enabled=(self.device.type=="cuda")):
-                    x = self.model(**inputs).last_hidden_state
-                    mask = inputs["attention_mask"].to(x.dtype).unsqueeze(-1)
-                    summed = (x * mask).sum(dim=1)
-                    lengths = mask.sum(dim=1).clamp(min=1e-6)
-                    mean = summed / lengths
-                    norm = F.normalize(mean, p=2, dim=1)
-                vecs.append(norm.float().cpu())
-        return torch.cat(vecs, dim=0).contiguous().numpy() if vecs else np.empty((0, self.model.config.hidden_size), dtype=np.float32)
 
 # --------- Dense Retriever ---------
 class DenseRetriever:

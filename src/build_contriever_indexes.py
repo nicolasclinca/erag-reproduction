@@ -23,15 +23,13 @@ from typing import Iterator, List
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 import faiss
-from transformers import AutoTokenizer, AutoModel
+from contriever_encoder import (
+    ContrieverEncoder, MODEL_NAME, MAX_LENGTH, DTYPE
+)
 
 
 # ---------------- Config default ----------------
-MODEL_NAME = "facebook/contriever"
-MAX_LENGTH = 200
-DTYPE = torch.float16
 SEED = 42
 
 # Tuning (subset)
@@ -87,75 +85,6 @@ def read_contents_list(path: str, n: int) -> List[str]:
         if len(out) >= n: break
     return out
 
-# ---------------- Encoder con prefetch + pooling efficiente ----------------
-import threading, queue
-
-class TokenizePrefetcher:
-    def __init__(self, tokenizer, device, batch_size, max_length, prefetch_batches=8):
-        self.tokenizer = tokenizer; self.device = device
-        self.batch_size = batch_size; self.max_length = max_length
-        self.q = queue.Queue(maxsize=prefetch_batches)
-        self.stop = object()
-
-    def _producer(self, docs_iter):
-        batch = []
-        for doc in docs_iter:
-            batch.append(doc)
-            if len(batch) >= self.batch_size:
-                inputs = self.tokenizer(batch, padding=True, truncation=True, max_length=self.max_length, return_tensors="pt")
-                if self.device.type == "cuda":
-                    inputs = {k: v.pin_memory() for k,v in inputs.items()}
-                self.q.put(inputs); batch=[]
-        if batch:
-            inputs = self.tokenizer(batch, padding=True, truncation=True, max_length=self.max_length, return_tensors="pt")
-            if self.device.type == "cuda":
-                inputs = {k: v.pin_memory() for k,v in inputs.items()}
-            self.q.put(inputs)
-        self.q.put(self.stop)
-
-    def start(self, docs_iterable):
-        t = threading.Thread(target=self._producer, args=(iter(docs_iterable),), daemon=True)
-        t.start()
-
-    def next(self):
-        x = self.q.get()
-        return None if x is self.stop else x
-
-class ContrieverEncoder:
-    def __init__(self, model_name=MODEL_NAME, device=None, max_length=MAX_LENGTH, dtype=DTYPE):
-        self.device = device or (torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"))
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
-        self.model = AutoModel.from_pretrained(model_name).to(self.device); self.model.eval()
-        self.D = self.model.config.hidden_size
-        self.max_length = max_length; self.dtype = dtype
-        torch.backends.cuda.matmul.allow_tf32 = True
-        try: torch.set_float32_matmul_precision("high")
-        except Exception: pass
-
-    def encode_with(self, docs: List[str], batch_size: int) -> np.ndarray:
-        if not docs: return np.empty((0, self.D), dtype=np.float32)
-        out = np.empty((len(docs), self.D), dtype=np.float32)
-        pf = TokenizePrefetcher(self.tokenizer, self.device, batch_size, self.max_length,
-                                prefetch_batches=8 if batch_size<=16 else 4)
-        pf.start(docs)
-        off = 0
-        with torch.inference_mode():
-            while True:
-                inputs_cpu = pf.next()
-                if inputs_cpu is None: break
-                inputs = {k: v.to(self.device, non_blocking=True) if self.device.type=="cuda" else v.to(self.device)
-                        for k,v in inputs_cpu.items()}
-                with torch.amp.autocast(device_type='cuda', dtype=self.dtype, enabled=(self.device.type=="cuda")):
-                    x = self.model(**inputs).last_hidden_state
-                x = x.float()
-                mask = inputs["attention_mask"].to(x.dtype).unsqueeze(-1)
-                mean = (x * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1e-6)
-                norm = F.normalize(mean, p=2, dim=1)
-                batch_np = norm.cpu().numpy().astype(np.float32, copy=False)
-                n = batch_np.shape[0]
-                out[off:off+n] = batch_np
-                off += n
-        return out
 
 # ---------------- Tuning bs ----------------
 def autotune_batch_size(encoder: ContrieverEncoder, input_jsonl: str, tune_docs: int, candidates: List[int]) -> int:
@@ -172,7 +101,7 @@ def autotune_batch_size(encoder: ContrieverEncoder, input_jsonl: str, tune_docs:
                 torch.cuda.empty_cache()
                 torch.cuda.reset_peak_memory_stats()
             t0 = time.time()
-            _ = encoder.encode_with(sample, batch_size=bs)  # embeddings scartati
+            _ = encoder.encode(sample, batch_size=bs, prefetch=True)  # embeddings scartati
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
             dt = time.time() - t0
@@ -218,7 +147,7 @@ def build_training_matrix(input_jsonl: str, encoder: ContrieverEncoder, train_si
             continue
         buf.append(c)
         if len(buf) >= block_docs:
-            xb = encoder.encode_with(buf, batch_size=bs)
+            xb = encoder.encode(buf, batch_size=bs, prefetch=True)
             take = min(train_size - total, xb.shape[0])
             if take > 0:
                 X[total:total+take] = xb[:take]
@@ -229,7 +158,7 @@ def build_training_matrix(input_jsonl: str, encoder: ContrieverEncoder, train_si
             if total and total % 100_000 == 0:
                 log(f"[train] Encoded {total:,}/{train_size:,} in {(time.time()-t0)/60:.1f} min")
     if buf and total < train_size:
-        xb = encoder.encode_with(buf, batch_size=bs)
+        xb = encoder.encode(buf, batch_size=bs, prefetch=True)
         take = min(train_size - total, xb.shape[0])
         X[total:total+take] = xb[:take]
         total += take
@@ -354,7 +283,7 @@ def add_streaming(input_jsonl: str, out_dir: str, index: faiss.IndexIDMap2,
         processed_valid += 1
 
         if len(buf_docs) >= add_block:
-            xb = encoder.encode_with(buf_docs, batch_size=bs)
+            xb = encoder.encode(buf_docs, batch_size=bs, prefetch=True)
             n = xb.shape[0]
             if n:
                 ids = np.asarray(buf_ids[:n], dtype=np.int64)
@@ -376,7 +305,7 @@ def add_streaming(input_jsonl: str, out_dir: str, index: faiss.IndexIDMap2,
 
     # Flush finale
     if buf_docs:
-        xb = encoder.encode_with(buf_docs, batch_size=bs)
+        xb = encoder.encode(buf_docs, batch_size=bs, prefetch=True)
         n = xb.shape[0]
         if n:
             ids = np.asarray(buf_ids[:n], dtype=np.int64)
