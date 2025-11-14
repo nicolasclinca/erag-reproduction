@@ -114,18 +114,31 @@ class JsonlCollection:
             pass
 
 
+# --------- Helper ---------
+def _set_nprobe_deep(index: faiss.Index, nprobe: Optional[int]) -> None:
+    if nprobe is None:
+        return
+    try:
+        core = index
+        # Unwrap IDMap
+        if isinstance(core, (faiss.IndexIDMap, faiss.IndexIDMap2)) and hasattr(core, "index"):
+            core = core.index
+        # Unwrap PreTransform (OPQ)
+        if isinstance(core, faiss.IndexPreTransform) and hasattr(core, "index"):
+            core = core.index
+        # Now core should be IVF-like
+        if hasattr(core, "nprobe"):
+            core.nprobe = int(nprobe)
+    except Exception:
+        pass
+
 # --------- Dense Retriever ---------
 class DenseRetriever:
     def __init__(self, index_path: str, collection_path: str, offsets_path: Optional[str] = None,
                  nprobe: Optional[int] = None, model_name=MODEL_NAME, device=DEVICE, max_length=MAX_LENGTH, dtype=DTYPE,
                  in_memory: bool = False):
         self.index = faiss.read_index(index_path)
-        try:
-            if hasattr(self.index, "nprobe") and nprobe is not None:
-                self.index.nprobe = nprobe
-            elif hasattr(self.index, "index") and hasattr(self.index.index, "nprobe") and nprobe is not None:
-                self.index.index.nprobe = nprobe
-        except Exception: pass
+        _set_nprobe_deep(self.index, nprobe)
 
         self.collection = JsonlCollection(collection_path, offsets_path=offsets_path, in_memory=in_memory)
         self.encoder = ContrieverEncoder(model_name=model_name, device=device, max_length=max_length, dtype=dtype)

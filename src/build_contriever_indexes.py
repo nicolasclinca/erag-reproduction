@@ -203,105 +203,122 @@ def build_or_load_index(train_vectors: np.ndarray, out_dir: str, nlist: int, m: 
     faiss.write_index(idx, index_path); log(f"[save] Index saved: {index_path}")
     return idx
 
+# ---------------- Helpers ----------------
+def _progress_path(out_dir: str, fname: str = "add_progress.json") -> str:
+    return os.path.join(out_dir, fname)
+
+def _load_progress(out_dir: str) -> dict:
+    p = _progress_path(out_dir)
+    if os.path.exists(p):
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"last_line": -1, "ntotal": 0}
+
+def _save_progress(out_dir: str, last_line: int, ntotal: int) -> None:
+    p = _progress_path(out_dir)
+    tmp = p + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"last_line": int(last_line), "ntotal": int(ntotal)}, f)
+    os.replace(tmp, p)
+
 # ---------------- Add streaming ----------------
 def add_streaming(input_jsonl: str, out_dir: str, index: faiss.IndexIDMap2,
                   encoder: ContrieverEncoder, add_block: int, index_filename: str,
-                  bs: int, checkpoint_every: int = 0) -> int:
+                  bs: int, checkpoint_every: int = 0, resume: bool = True) -> int:
     """
-    Aggiunge documenti all'indice in streaming utilizzando gli ID originali dal JSONL.
-    Il resume avviene saltando i primi `index.ntotal` documenti validi (non vuoti) del JSONL.
-    Scrive su disco solo ogni `checkpoint_every` blocchi; se <= 0 non fa checkpoint periodici.
-    Il salvataggio finale è demandato al chiamante (main).
-    """
-    import hashlib
-    index_path = os.path.join(out_dir, index_filename)
+    Aggiunge documenti all'indice in streaming usando come ID FAISS l'indice di riga (0-based)
+    del file JSONL.
 
-    # Numero di vettori già presenti nell'indice (per il resume)
-    try:
-        already_indexed = int(index.ntotal)
-    except Exception:
-        already_indexed = 0
-    log(f"[add] Resume at next_id={already_indexed:,} | bs={bs} | ckpt_every={checkpoint_every}")
+    Resume: se resume=True, riparte dalla riga last_line+1 salvata in add_progress.json.
+    Se resume=True ma il progress file non esiste e l'indice contiene già vettori,
+    viene sollevata un'eccezione per evitare duplicati.
+    """
+    index_path = os.path.join(out_dir, index_filename)
+    os.makedirs(out_dir, exist_ok=True)
+
+    prog_path = _progress_path(out_dir)
+    prog_exists = os.path.exists(prog_path)
+
+    # Determina start_line in modo robusto
+    if resume:
+        if prog_exists:
+            prog = _load_progress(out_dir)
+            start_line = int(prog.get("last_line", -1)) + 1
+        else:
+            # Niente progress file: se l'indice non è vuoto, interrompi per evitare duplicati
+            if getattr(index, "ntotal", 0) > 0:
+                raise RuntimeError(
+                    "Resume richiesto ma non esiste alcun progress file. "
+                    "Per riprendere in sicurezza usa il progress file oppure cancella l'indice "
+                    "o lancia con --resume=False per ricostruire da zero."
+                )
+            start_line = 0
+    else:
+        # Non si supporta l'append senza progress: se l'indice non è vuoto, interrompi
+        if getattr(index, "ntotal", 0) > 0:
+            raise RuntimeError(
+                "Indice non vuoto e resume=False: per evitare duplicati interrompo. "
+                "Usa --resume o cancella l'indice e ricostruisci."
+            )
+        start_line = 0
+
+    log(f"[add] Start from line={start_line} | bs={bs} | ckpt_every={checkpoint_every} | resume={resume}")
 
     total_added = 0
     t0 = time.time()
     buf_docs: List[str] = []
     buf_ids: List[int] = []
     block_idx = 0
+    last_added_line = start_line - 1
 
-    # Numero di documenti validi (non vuoti) visti dal JSONL
-    processed_valid = 0
+    with open(input_jsonl, "r", encoding="utf-8") as f:
+        for i, line in enumerate(f):
+            if i < start_line:
+                continue
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue
 
-    def to_faiss_id(raw_id, fallback: int) -> int:
-        # Id numerico
-        if isinstance(raw_id, (int, np.integer)):
-            return int(raw_id)
+            c = rec.get("contents", "")
+            if not isinstance(c, str):
+                c = str(c) if c is not None else ""
+            c = c.strip()
+            if not c:
+                continue
 
-        # Id stringa
-        if isinstance(raw_id, str):
-            s = raw_id.strip()
-            # Stringa numerica
-            if s and (s.isdigit() or (s[0] == '-' and s[1:].isdigit())):
-                try:
-                    return int(s)
-                except Exception:
-                    pass
-            # Hash deterministico 64-bit per stringhe non numeriche
-            h = hashlib.sha1(s.encode("utf-8")).digest()
-            val = int.from_bytes(h[:8], byteorder="little", signed=False)
-            val &= (1 << 63) - 1  # forza positivo
-            return int(val)
+            # ID FAISS = indice di riga
+            rid = int(i)
+            buf_docs.append(c)
+            buf_ids.append(rid)
+            last_added_line = i
 
-        if raw_id is None:
-            return int(fallback)
+            if len(buf_docs) >= add_block:
+                xb = encoder.encode(buf_docs, batch_size=bs, prefetch=True)
+                n = xb.shape[0]
+                if n:
+                    ids = np.asarray(buf_ids[:n], dtype=np.int64)
+                    index.add_with_ids(np.ascontiguousarray(xb, dtype=np.float32), ids)
+                    total_added += n
+                    block_idx += 1
+                    # checkpoint opzionale
+                    if checkpoint_every > 0 and (block_idx % checkpoint_every == 0):
+                        faiss.write_index(index, index_path)
+                        _save_progress(out_dir, last_added_line, int(index.ntotal))
+                        elapsed = time.time() - t0
+                        rate = total_added / max(1e-9, elapsed)
+                        log(f"[add][ckpt] Block {block_idx} | Added {total_added:,} | {rate:.1f} docs/s | saved -> {index_path}")
+                buf_docs.clear()
+                buf_ids.clear()
 
-        try:
-            return int(raw_id)
-        except Exception:
-            return int(fallback)
-
-    it = iter_jsonl(input_jsonl)
-    for rec in it:
-        c = rec.get("contents", "")
-        if not isinstance(c, str):
-            c = str(c) if c is not None else ""
-        c = c.strip()
-        if not c:
-            continue
-
-        # Skip per resume: salta i primi 'already_indexed' documenti validi
-        if processed_valid < already_indexed:
-            processed_valid += 1
-            continue
-
-        # Fallback id basato sulla posizione globale del documento
-        fallback_id = processed_valid
-        rid = to_faiss_id(rec.get("id", None), fallback=fallback_id)
-
-        buf_docs.append(c)
-        buf_ids.append(rid)
-        processed_valid += 1
-
-        if len(buf_docs) >= add_block:
-            xb = encoder.encode(buf_docs, batch_size=bs, prefetch=True)
-            n = xb.shape[0]
-            if n:
-                ids = np.asarray(buf_ids[:n], dtype=np.int64)
-                index.add_with_ids(np.ascontiguousarray(xb, dtype=np.float32), ids)
-                total_added += n
-                block_idx += 1
-            buf_docs.clear()
-            buf_ids.clear()
-
-            if checkpoint_every > 0 and (block_idx % checkpoint_every == 0):
-                faiss.write_index(index, index_path)
                 elapsed = time.time() - t0
                 rate = total_added / max(1e-9, elapsed)
-                log(f"[add][ckpt] Block {block_idx} | Added {total_added:,} | {rate:.1f} docs/s | saved -> {index_path}")
-
-            elapsed = time.time() - t0
-            rate = total_added / max(1e-9, elapsed)
-            log(f"[add] Added {total_added:,} | {rate:.1f} docs/s | elapsed {elapsed/60:.1f} min")
+                log(f"[add] Added {total_added:,} | {rate:.1f} docs/s | elapsed {elapsed/60:.1f} min")
 
     # Flush finale
     if buf_docs:
@@ -312,16 +329,16 @@ def add_streaming(input_jsonl: str, out_dir: str, index: faiss.IndexIDMap2,
             index.add_with_ids(np.ascontiguousarray(xb, dtype=np.float32), ids)
             total_added += n
             block_idx += 1
-
             if checkpoint_every > 0 and (block_idx % checkpoint_every == 0):
                 faiss.write_index(index, index_path)
+                _save_progress(out_dir, last_added_line, int(index.ntotal))
                 elapsed = time.time() - t0
                 rate = total_added / max(1e-9, elapsed)
                 log(f"[add][ckpt] Block {block_idx} | Added {total_added:,} | {rate:.1f} docs/s | saved -> {index_path}")
 
     elapsed = time.time() - t0
     rate = total_added / max(1e-9, elapsed)
-    log(f"[add] Done. Added {total_added:,} | {rate:.1f} docs/s | elapsed {elapsed/60:.1f} min")
+    log(f"[add] Done. Added {total_added:,} | {rate:.1f} docs/s | elapsed {elapsed/60:.1f} min | last_line={last_added_line}")
     return total_added
 
 # ---------------- Meta ----------------
@@ -333,6 +350,8 @@ def write_meta(out_dir: str, input_jsonl: str, index_filename: str, best_bs: int
         "tuned_batch_size": best_bs,
         "m": m, "nbits": nbits, "nlist": nlist, "nprobe": nprobe,
         "dim": d, "encoder": MODEL_NAME, "max_length": MAX_LENGTH,
+        "id_scheme": "line_index",
+        "progress_file": os.path.abspath(_progress_path(out_dir)),
     }
     with open(os.path.join(out_dir, META_FILENAME), "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
@@ -421,9 +440,9 @@ def main():
         index = build_or_load_index(X_train, args.out_dir, args.nlist, args.m, args.nbits, args.nprobe,
                                     index_filename=INDEX_FILENAME, resume=args.resume)
 
-    # 4) Add streaming con checkpoint opzionali
+    # 4) Add streaming con checkpoint opzionali (IDs = line index)
     added = add_streaming(args.input_jsonl, args.out_dir, index, encoder, args.add_block, INDEX_FILENAME,
-                          bs=best_bs, checkpoint_every=args.checkpoint_every)
+                          bs=best_bs, checkpoint_every=args.checkpoint_every, resume=args.resume)
     log(f"[done] ntotal={index.ntotal:,} | added_now={added:,}")
 
     # Salvataggio finale su disco (al termine)

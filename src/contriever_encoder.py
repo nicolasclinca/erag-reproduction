@@ -77,7 +77,6 @@ class ContrieverEncoder:
         self.model.eval()
         self.D = int(self.model.config.hidden_size)
 
-        # velocità/matmul
         torch.backends.cuda.matmul.allow_tf32 = True
         try:
             torch.set_float32_matmul_precision("high")
