@@ -336,6 +336,9 @@ def add_streaming(input_jsonl: str, out_dir: str, index: faiss.IndexIDMap2,
                 rate = total_added / max(1e-9, elapsed)
                 log(f"[add][ckpt] Block {block_idx} | Added {total_added:,} | {rate:.1f} docs/s | saved -> {index_path}")
 
+    # Salvataggio finale su disco
+    faiss.write_index(index, index_path)
+    _save_progress(out_dir, last_added_line, int(index.ntotal))
     elapsed = time.time() - t0
     rate = total_added / max(1e-9, elapsed)
     log(f"[add] Done. Added {total_added:,} | {rate:.1f} docs/s | elapsed {elapsed/60:.1f} min | last_line={last_added_line}")
@@ -444,9 +447,6 @@ def main():
     added = add_streaming(args.input_jsonl, args.out_dir, index, encoder, args.add_block, INDEX_FILENAME,
                           bs=best_bs, checkpoint_every=args.checkpoint_every, resume=args.resume)
     log(f"[done] ntotal={index.ntotal:,} | added_now={added:,}")
-
-    # Salvataggio finale su disco (al termine)
-    faiss.write_index(index, os.path.join(args.out_dir, INDEX_FILENAME))
 
     # 5) Meta
     idx_params = get_index_params_from_faiss(index)

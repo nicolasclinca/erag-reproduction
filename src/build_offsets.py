@@ -28,8 +28,8 @@ def build_offsets(collection_path: str, offsets_path: str) -> int:
     return count
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="Build offsets file for JSONL (one uint64 per line).")
-    ap.add_argument("--collection", required=True, help="Path to JSONL (id, contents).")
-    ap.add_argument("--out", required=True, help="Path to write offsets (e.g., ./index_out/collection_offsets.u64.bin).")
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser(description="Build offsets file for JSONL (one uint64 per line).")
+    parser.add_argument("--collection", required=True, help="Path to JSONL (id, contents).")
+    parser.add_argument("--out", required=True, help="Path to write offsets (e.g., ./index_out/collection_offsets.u64.bin).")
+    args = parser.parse_args()
     build_offsets(args.collection, args.out)
