@@ -195,15 +195,15 @@ class DenseRetriever:
 
 # --------- CLI ---------
 def main():
-    ap = argparse.ArgumentParser(description="Dense retrieval su JSONL + FAISS (no docstore, no memmap).")
-    ap.add_argument("--index", required=True, help="Path indice FAISS (.faiss)")
-    ap.add_argument("--collection", required=True, help="Path JSONL preprocessato (id, contents)")
-    ap.add_argument("--offsets", default=None, help="Offsets binari uint64 (opzionale, consigliato)")
-    ap.add_argument("--query", required=True, help="Query text")
-    ap.add_argument("--k", type=int, default=5)
-    ap.add_argument("--nprobe", type=int, default=None)
-    ap.add_argument("--in_memory", action="store_true", help="Carica l'intera collezione in RAM (solo mini-run)")
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser(description="Dense retrieval su JSONL + FAISS (no docstore, no memmap).")
+    parser.add_argument("--index", required=True, help="Path indice FAISS (.faiss)")
+    parser.add_argument("--collection", required=True, help="Path JSONL preprocessato (id, contents)")
+    parser.add_argument("--offsets", default=None, help="Offsets binari uint64 (opzionale, consigliato)")
+    parser.add_argument("--query", required=True, help="Query text")
+    parser.add_argument("--k", type=int, default=5)
+    parser.add_argument("--nprobe", type=int, default=None)
+    parser.add_argument("--in_memory", action="store_true", help="Carica l'intera collezione in RAM (solo mini-run)")
+    args = parser.parse_args()
 
     retr = DenseRetriever(index_path=args.index,
                           collection_path=args.collection,
