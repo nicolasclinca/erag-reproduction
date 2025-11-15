@@ -102,7 +102,8 @@ def _load_queries_file(path: str) -> List[str]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="BM25 retrieval (PySerini) with optional batch mode and threads control.")
+    parser = argparse.ArgumentParser(description="BM25 retrieval (PySerini) with optional batch mode and threads control.",
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--bm25_index_dir", required=True, help="Directory dell'indice BM25 (PySerini)")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--query", type=str, help="Singola query da cercare")

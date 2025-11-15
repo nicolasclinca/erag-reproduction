@@ -120,7 +120,8 @@ def process_source_request(url, out_path, args):
 
 
 if __name__=="__main__":
-    parser = argparse.ArgumentParser(description="Preprocess Wikipedia Dump")
+    parser = argparse.ArgumentParser(description="Preprocess Wikipedia Dump",
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--url", type=str, default="http://dl.fbaipublicfiles.com/KILT/kilt_knowledgesource.json",
                         help="URL della knowledge source KILT")
     parser.add_argument("--output", type=str, default="../data/collection/wikipedia_passages.jsonl",

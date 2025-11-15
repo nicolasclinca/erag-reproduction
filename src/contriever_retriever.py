@@ -195,7 +195,8 @@ class DenseRetriever:
 
 # --------- CLI ---------
 def main():
-    parser = argparse.ArgumentParser(description="Dense retrieval su JSONL + FAISS (no docstore, no memmap).")
+    parser = argparse.ArgumentParser(description="Dense retrieval su JSONL + FAISS (no docstore, no memmap).",
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--faiss_index", required=True, help="Path indice FAISS (.faiss)")
     parser.add_argument("--collection", required=True, help="Path JSONL preprocessato (id, contents)")
     parser.add_argument("--offsets", default=None, help="Offsets binari uint64 (opzionale, consigliato)")

@@ -512,7 +512,8 @@ def load_queries_docs_from_json(path: str) -> Dict[str, List[str]]:
 # CLI
 # =========================
 def main():
-    parser = argparse.ArgumentParser(description="Unified T5 FiD Training and Inference")
+    parser = argparse.ArgumentParser(description="Unified T5 FiD Training and Inference",
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # Train

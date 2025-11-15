@@ -121,7 +121,8 @@ def augment_datasets(args):
 
         # Augment e salvataggio
         augmented = augment_with_retrieved_documents(expected_outputs, retrieved_results)
-        dirn = os.path.dirname(dataset_path) or "."
+        dirn = args.out_dir if args.out_dir else (os.path.dirname(dataset_path) or ".")
+        os.makedirs(dirn, exist_ok=True)
         base = os.path.splitext(os.path.basename(dataset_path))[0]
         out_path = os.path.join(dirn, f"{base}-augmented.json")
 
@@ -132,9 +133,12 @@ def augment_datasets(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Augment datasets with retrieved documents")
+    parser = argparse.ArgumentParser(description="Augment datasets with retrieved documents",
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--datasets", type=str, nargs="+", required=True,
         help="List of paths to the datasets to process (separated by space).")
+    parser.add_argument("--out_dir", type=str, default=None,
+        help="Directory dove salvare i dataset augmentati. Default: stessa cartella del dataset.")
     parser.add_argument("--method", type=str, choices=["BM25", "Contriever"], default="BM25",
         help="Retrieval method (BM25 or Contriever)")
     parser.add_argument("--k", type=int, default=50,
