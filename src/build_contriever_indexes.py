@@ -346,7 +346,7 @@ def add_streaming(input_jsonl: str, out_dir: str, index: faiss.IndexIDMap2,
 
 # ---------------- Meta ----------------
 def write_meta(out_dir: str, input_jsonl: str, index_filename: str, best_bs: int, d: int,
-               nlist: int, nprobe: int, m: int, nbits: int):
+               nlist: int, nprobe: int, m: int, nbits: int, meta_filename: str = META_FILENAME):
     meta = {
         "collection_path": os.path.abspath(input_jsonl),
         "index_path": os.path.abspath(os.path.join(out_dir, index_filename)),
@@ -356,7 +356,7 @@ def write_meta(out_dir: str, input_jsonl: str, index_filename: str, best_bs: int
         "id_scheme": "line_index",
         "progress_file": os.path.abspath(_progress_path(out_dir)),
     }
-    with open(os.path.join(out_dir, META_FILENAME), "w", encoding="utf-8") as f:
+    with open(os.path.join(out_dir, meta_filename), "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
 
 
@@ -393,6 +393,10 @@ def main():
     parser.add_argument("--input_jsonl", required=True, help="File JSONL preprocessato (id, contents).")
     parser.add_argument("--out_dir", type=str, default="./index_out_full", 
                         help="Directory output (indice + meta).")
+    parser.add_argument("--index_filename", type=str, default=INDEX_FILENAME,
+                        help="Nome del file indice FAISS salvato in out_dir.")
+    parser.add_argument("--meta_filename", type=str, default=META_FILENAME,
+                        help="Nome del file metadata JSON salvato in out_dir.")
     parser.add_argument("--tune", action="store_true", help="Esegui tuning bs su un subset prima del build.")
     parser.add_argument("--tune_docs", type=int, default=TUNE_DOCS, 
                         help="#docs per tuning.")
@@ -430,31 +434,32 @@ def main():
         best_bs = autotune_batch_size(encoder, args.input_jsonl, tune_docs=args.tune_docs, candidates=TUNE_CANDIDATES)
 
     # 3) Costruisci o carica indice
-    index_path = os.path.join(args.out_dir, INDEX_FILENAME)
+    index_path = os.path.join(args.out_dir, args.index_filename)
     index_exists = args.resume and os.path.exists(index_path)
 
     if index_exists:
         # Carica direttamente l’indice
         index = build_or_load_index(np.empty((0, encoder.D), dtype=np.float32),
                                     args.out_dir, args.nlist, args.m, args.nbits, args.nprobe,
-                                    index_filename=INDEX_FILENAME, resume=True)
+                                    index_filename=args.index_filename, resume=True)
     else:
         # Costruisci training set e indice da zero
         X_train = build_training_matrix(args.input_jsonl, encoder, args.train_size,
                                         block_docs=args.train_block_docs, bs=best_bs)
         index = build_or_load_index(X_train, args.out_dir, args.nlist, args.m, args.nbits, args.nprobe,
-                                    index_filename=INDEX_FILENAME, resume=args.resume)
+                                    index_filename=args.index_filename, resume=args.resume)
 
     # 4) Add streaming con checkpoint opzionali (IDs = line index)
-    added = add_streaming(args.input_jsonl, args.out_dir, index, encoder, args.add_block, INDEX_FILENAME,
+    added = add_streaming(args.input_jsonl, args.out_dir, index, encoder, args.add_block, args.index_filename,
                           bs=best_bs, checkpoint_every=args.checkpoint_every, resume=args.resume)
     log(f"[done] ntotal={index.ntotal:,} | added_now={added:,}")
 
     # 5) Meta
     idx_params = get_index_params_from_faiss(index)
-    write_meta(args.out_dir, args.input_jsonl, INDEX_FILENAME, best_bs, encoder.D,
+    write_meta(args.out_dir, args.input_jsonl, args.index_filename, best_bs, encoder.D,
                nlist=idx_params["nlist"], nprobe=idx_params["nprobe"],
-               m=idx_params["m"], nbits=idx_params["nbits"])
+               m=idx_params["m"], nbits=idx_params["nbits"],
+               meta_filename=args.meta_filename)
     
 if __name__ == "__main__":
     main()
