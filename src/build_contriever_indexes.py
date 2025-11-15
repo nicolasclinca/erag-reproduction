@@ -5,14 +5,14 @@ Costruisce un indice OPQ+IVF-PQ (Contriever) partendo da una collezione preproce
 prosegue automaticamente con la combinazione migliore.
 
 Requisiti:
-  pip install torch faiss-cpu transformers
+pip install torch faiss-cpu transformers
 
 Uso CLI:
-  python build_contriever_indexes.py --input_jsonl ../data/collection/wikipedia_passages.jsonl \
-                          --out_dir ./index_out_full \
-                          --tune --tune_docs 100000 \
-                          --train_size 3000000 \
-                          --resume
+python build_contriever_indexes.py --input_jsonl ../data/collection/wikipedia_passages.jsonl \
+    --out_dir ./index_out_full \
+    --tune --tune_docs 100000 \
+    --train_size 3000000 \
+    --resume
 """
 
 import os

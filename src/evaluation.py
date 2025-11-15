@@ -9,24 +9,24 @@ Salva log JSON in ../logs
 Uso CLI:
 
 BM25
-python evaluation.py --model_dir ../models/fid_t5
-    --k_values 10 30 50
-    --method BM25
-    --bm25_index_dir ../indexes/bm25_index
-    --test_dataset_path ../data/nq-dev-kilt.jsonl
-    --metric em
+python evaluation.py --model_dir ../models/fid_t5 \
+    --k_values 10 30 50 \
+    --method BM25 \
+    --bm25_index_dir ../indexes/bm25_index \
+    --test_dataset_path ../data/nq-dev-kilt.jsonl \
+    --metric em \
     --logs_dir ../logs
 
 Contriever
-python evaluation.py --model_dir ../models/fid_t5
-    --k_values 10 30 50
-    --method Contriever
-    --faiss_index ./index_out_full/ivfpq_opq_contriever.faiss
-    --collection ../data/collection/wikipedia_passages.jsonl
-    --offsets ./index_out_full/collection_offsets.u64.bin
-    --nprobe 64
-    --test_dataset_path ../data/nq-dev-kilt.jsonl
-    --metric em
+python evaluation.py --model_dir ../models/fid_t5 \
+    --k_values 10 30 50 \
+    --method Contriever \
+    --faiss_index ./index_out_full/ivfpq_opq_contriever.faiss \
+    --collection ../data/collection/wikipedia_passages.jsonl \
+    --offsets ./index_out_full/collection_offsets.u64.bin \
+    --nprobe 64 \
+    --test_dataset_path ../data/nq-dev-kilt.jsonl \
+    --metric em \
     --logs_dir ../logs
 """
 

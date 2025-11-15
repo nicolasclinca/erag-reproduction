@@ -15,7 +15,7 @@ Limita a N record (per test/debug)
 python preprocess_wikipedia.py --max_record 10000 --output ../data/collection/wiki_small.jsonl
 
 Con throttling e buffer personalizzato
-python preprocess_wikipedia.py --buffer_size 1000000 --throttle 
+python preprocess_wikipedia.py --buffer_size 1000000 --throttle \
     --output ../data/collection/wikipedia_passages.jsonl
 """
 

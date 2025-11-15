@@ -7,18 +7,18 @@ prima del decoder per generare la risposta finale.
 Uso CLI:
 
 Training
-python fid_t5.py train --train_path ../data/train_augmented.json
---output_dir ./models/fid_t5
---model_name t5-small
---num_epochs 10
---per_device_batch_size 1
---effective_batch_size 64
+python fid_t5.py train --train_path ../data/train_augmented.json \
+    --output_dir ./models/fid_t5 \
+    --model_name t5-small \
+    --num_epochs 10 \
+    --per_device_batch_size 1 \
+    --effective_batch_size 64
 
 Inferenza
-python fid_t5.py generate --model_dir ./models/fid_t5
---input_json queries_docs.json
---output_json predictions.json
---num_beams 4
+python fid_t5.py generate --model_dir ./models/fid_t5 \
+    --input_json queries_docs.json \
+    --output_json predictions.json \
+    --num_beams 4
 """
 
 import os

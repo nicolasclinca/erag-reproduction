@@ -7,19 +7,19 @@ Supporta BM25 e Contriever per il retrieval.
 Uso CLI:
 
 BM25
-python data_loader.py --datasets ../data/nq-train-kilt.jsonl
-    --method BM25
-    --bm25_index_dir ../indexes/bm25_index
+python data_loader.py --datasets ../data/nq-train-kilt.jsonl \
+    --method BM25 \
+    --bm25_index_dir ../indexes/bm25_index \
     --k 50
     
 Contriever
-python data_loader.py --datasets ../data/nq-train-kilt.jsonl
-    --method Contriever
-    --faiss_index ./index_out_full/ivfpq_opq_contriever.faiss
-    --collection ../data/collection/wikipedia_passages.jsonl
-    --offsets ./index_out_full/collection_offsets.u64.bin
-    --nprobe 64
-    --k 50
+python data_loader.py --datasets ../data/nq-train-kilt.jsonl \
+    --method Contriever \
+    --faiss_index ./index_out_full/ivfpq_opq_contriever.faiss \
+    --collection ../data/collection/wikipedia_passages.jsonl \
+    --offsets ./index_out_full/collection_offsets.u64.bin \
+    --nprobe 64 \
+    --k 50 \
     --batch_size 256
 """
 
