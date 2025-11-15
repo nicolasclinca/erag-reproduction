@@ -7,15 +7,20 @@ Supporta BM25 e Contriever per il retrieval.
 Uso CLI:
 
 BM25
-python data_loader.py --datasets ../data/nq-train-kilt.jsonl ../data/nq-dev-kilt.jsonl
---method BM25
---k 50
-
+python data_loader.py --datasets ../data/nq-train-kilt.jsonl
+    --method BM25
+    --bm25_index_dir ../indexes/bm25_index
+    --k 50
+    
 Contriever
 python data_loader.py --datasets ../data/nq-train-kilt.jsonl
---method Contriever
---k 50
---batch_size 256
+    --method Contriever
+    --faiss_index ./index_out_full/ivfpq_opq_contriever.faiss
+    --collection ../data/collection/wikipedia_passages.jsonl
+    --offsets ./index_out_full/collection_offsets.u64.bin
+    --nprobe 64
+    --k 50
+    --batch_size 256
 """
 
 import json
@@ -80,14 +85,20 @@ def augment_datasets(args):
     # Istanzia il retriever
     retriever = None
     if args.method == 'BM25':
-        retriever = LuceneSearcher('../indexes/bm25_index')
+        if not args.bm25_index_dir:
+            raise ValueError("--bm25_index_dir è obbligatorio con --method BM25")
+        retriever = LuceneSearcher(args.bm25_index_dir)
     elif args.method == 'Contriever':
+        missing = [x for x in ("faiss_index", "collection") if getattr(args, x) in (None, "")]
+        if missing:
+            raise ValueError(f"Con --method Contriever servono: --faiss_index e --collection (mancanti: {missing})")
         retriever = DenseRetriever(
-            index_path="./index_out_full/ivfpq_opq_contriever.faiss",
-            collection_path="../data/collection/wikipedia_passages.jsonl",
-            offsets_path="./index_out_full/collection_offsets.u64.bin",
-            nprobe=64,
-        )
+                index_path=args.faiss_index,
+                collection_path=args.collection,
+                offsets_path=args.offsets,
+                nprobe=args.nprobe,
+                in_memory=args.in_memory
+            )
 
     for dataset_path in args.datasets:
         if not os.path.exists(dataset_path):
@@ -106,7 +117,7 @@ def augment_datasets(args):
             k=args.k,
             retriever=retriever,
             batch_size=args.batch_size,
-        )
+            )
 
         # Augment e salvataggio
         augmented = augment_with_retrieved_documents(expected_outputs, retrieved_results)
@@ -130,6 +141,14 @@ if __name__ == "__main__":
         help="Number of documents to retrieve for each query (default: 50)")
     parser.add_argument("--batch_size", type=int, default=256,
         help="Batch size for dense retrieval (default: 256)")
+    parser.add_argument("--bm25_index_dir", type=str, help="Directory indice BM25 (PySerini)")
+    parser.add_argument("--faiss_index", type=str, help="Path indice FAISS (.faiss) per Contriever")
+    parser.add_argument("--collection", type=str, 
+        help="Path JSONL collezione (id, contents) per Contriever")
+    parser.add_argument("--offsets", type=str, default=None, help="Offsets binari uint64 (opzionale)")
+    parser.add_argument("--nprobe", type=int, default=64, help="FAISS nprobe")
+    parser.add_argument("--in_memory", action="store_true", 
+        help="Carica tutta la collezione in RAM (solo mini-run)")
     args = parser.parse_args()
     augment_datasets(args)
     print("Process completed.")

@@ -9,13 +9,14 @@ Output: ../data/collection/wikipedia_passages.jsonl
 Uso CLI:
 
 Download completo (~5.9M articoli → ~108M passaggi)
-python preprocess_wikipedia.py
+python preprocess_wikipedia.py --output ../data/collection/wikipedia_passages.jsonl
 
 Limita a N record (per test/debug)
-python preprocess_wikipedia.py --max_record 10000
+python preprocess_wikipedia.py --max_record 10000 --output ../data/collection/wiki_small.jsonl
 
 Con throttling e buffer personalizzato
-python preprocess_wikipedia.py --buffer_size 1000000 --throttle
+python preprocess_wikipedia.py --buffer_size 1000000 --throttle 
+    --output ../data/collection/wikipedia_passages.jsonl
 """
 
 import json
@@ -119,10 +120,11 @@ def process_source_request(url, out_path, args):
 
 
 if __name__=="__main__":
-    input_path = '../data/wikipedia_dump.jsonl'
-    url = "http://dl.fbaipublicfiles.com/KILT/kilt_knowledgesource.json"
-    output_path = '../data/collection/wikipedia_passages.jsonl'
     parser = argparse.ArgumentParser(description="Preprocess Wikipedia Dump")
+    parser.add_argument("--url", type=str, default="http://dl.fbaipublicfiles.com/KILT/kilt_knowledgesource.json",
+                        help="URL della knowledge source KILT")
+    parser.add_argument("--output", type=str, default="../data/collection/wikipedia_passages.jsonl",
+                        help="Path di output JSONL")
     parser.add_argument("--max_record", type=int, default=0,
                         help="Number of record taken from the Wikipedia Dump (for smaller wikipedia dump). Default is 0 (no limit).")
     parser.add_argument("--buffer_size", type=int, default=500000,
@@ -130,4 +132,4 @@ if __name__=="__main__":
     parser.add_argument("--throttle", action="store_true",
                         help="Enable throttling (sleep 0.5s after each buffer flush).")
     args = parser.parse_args()
-    process_source_request(url, output_path, args)
+    process_source_request(args.url, args.output, args)

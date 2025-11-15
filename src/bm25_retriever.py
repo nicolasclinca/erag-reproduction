@@ -6,15 +6,14 @@ Restituisce i top-k passaggi più rilevanti per una query.
 Note:
 
 L'indice deve essere già costruito con PySerini (vedi esempio sotto).
-Hardcoded path: '../indexes/bm25_index'
 Costruzione indice (eseguire una volta):
 python -m pyserini.index.lucene
--collection JsonCollection
--input ../data/collection
--index ../indexes/bm25_index
--generator DefaultLuceneDocumentGenerator
--threads 8
--storePositions -storeDocvectors -storeRaw
+    -collection JsonCollection
+    -input ../data/collection
+    -index ../indexes/bm25_index
+    -generator DefaultLuceneDocumentGenerator
+    -threads 8
+    -storePositions -storeDocvectors -storeRaw
 """
 
 import json
@@ -72,3 +71,7 @@ def bm25_batch_retrieve(
             results[query] = top_contents
     
     return results
+
+
+def create_bm25_searcher(index_dir: str) -> LuceneSearcher:
+    return LuceneSearcher(index_dir)

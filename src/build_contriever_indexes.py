@@ -391,9 +391,11 @@ def get_index_params_from_faiss(index: faiss.Index) -> dict:
 def main():
     parser = argparse.ArgumentParser(description="Build OPQ+IVF-PQ index from preprocessed JSONL, with bs tuning.")
     parser.add_argument("--input_jsonl", required=True, help="File JSONL preprocessato (id, contents).")
-    parser.add_argument("--out_dir", type=str, default="./index_out_full", help="Directory output (indice + meta).")
+    parser.add_argument("--out_dir", type=str, default="./index_out_full", 
+                        help="Directory output (indice + meta).")
     parser.add_argument("--tune", action="store_true", help="Esegui tuning bs su un subset prima del build.")
-    parser.add_argument("--tune_docs", type=int, default=TUNE_DOCS, help="#docs per tuning.")
+    parser.add_argument("--tune_docs", type=int, default=TUNE_DOCS, 
+                        help="#docs per tuning.")
     parser.add_argument("--train_size", type=int, default=TRAIN_SIZE)
     parser.add_argument("--train_block_docs", type=int, default=TRAIN_BLOCK_DOCS)
     parser.add_argument("--add_block", type=int, default=ADD_BLOCK)

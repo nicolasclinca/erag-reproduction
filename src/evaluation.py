@@ -7,11 +7,27 @@ Valutazione pipeline RAG (retrieval + generazione T5-FiD):
 Salva log JSON in ../logs
 
 Uso CLI:
-  python evaluation.py --model_dir ../models/fid_t5 \
-                       --k_values 10 30 50 \
-                       --method BM25 \
-                       --test_dataset_path ../data/nq-dev-kilt.jsonl \
-                       --metric em
+
+BM25
+python evaluation.py --model_dir ../models/fid_t5
+    --k_values 10 30 50
+    --method BM25
+    --bm25_index_dir ../indexes/bm25_index
+    --test_dataset_path ../data/nq-dev-kilt.jsonl
+    --metric em
+    --logs_dir ../logs
+
+Contriever
+python evaluation.py --model_dir ../models/fid_t5
+    --k_values 10 30 50
+    --method Contriever
+    --faiss_index ./index_out_full/ivfpq_opq_contriever.faiss
+    --collection ../data/collection/wikipedia_passages.jsonl
+    --offsets ./index_out_full/collection_offsets.u64.bin
+    --nprobe 64
+    --test_dataset_path ../data/nq-dev-kilt.jsonl
+    --metric em
+    --logs_dir ../logs
 """
 
 import json
@@ -60,7 +76,7 @@ def evaluation_erag(
     downstream_metric_func,
     retrieval_metrics,
     method,
-    log_dir="../logs",
+    log_dir,
 ):
 
     print(f"\nEvaluating eRAG scores...")
@@ -92,7 +108,7 @@ def evaluation_e2e(
     test_queries,
     method,
     k_values,
-    log_dir="../logs",
+    log_dir,
 ):
     # Preparazione container per tutti i k
     all_e2e_scores = {}
@@ -135,7 +151,7 @@ def get_correlations(
     all_e2e_scores,
     method,
     doc_n,
-    log_dir="../logs",
+    log_dir,
 ):
     def _select_k_key_for_metric(metric_name, fallback):
         m = re.search(r'(\d+)$', metric_name)
@@ -188,7 +204,7 @@ def define_retrieval_metrics(k_values, metric):
 
 def full_evaluation(args):
     # 0) Preparazione log directory
-    LOG_DIR = "../logs"
+    LOG_DIR = args.logs_dir
     os.makedirs(LOG_DIR, exist_ok=True)
     
     # 1) Definizione metriche
@@ -206,14 +222,20 @@ def full_evaluation(args):
     print(f"Retrieving {doc_n} documents per query using: {args.method}")
     retriever = None
     if args.method == 'BM25':
-        retriever = LuceneSearcher('../indexes/bm25_index')
+        if not args.bm25_index_dir:
+            raise ValueError("--bm25_index_dir è obbligatorio con --method BM25")
+        retriever = LuceneSearcher(args.bm25_index_dir)
     elif args.method == 'Contriever':
+        missing = [x for x in ("faiss_index", "collection") if getattr(args, x) in (None, "")]
+        if missing:
+            raise ValueError(f"Con --method Contriever servono: --faiss_index e --collection (mancanti: {missing})")
         retriever = DenseRetriever(
-            index_path="./index_out_full/ivfpq_opq_contriever.faiss",
-            collection_path="../data/collection/wikipedia_passages.jsonl",
-            offsets_path="./index_out_full/collection_offsets.u64.bin",
-            nprobe=64,
-        )
+            index_path=args.faiss_index,
+            collection_path=args.collection,
+            offsets_path=args.offsets,
+            nprobe=args.nprobe,
+            in_memory=args.in_memory
+            )
     test_retrieval_results = retrieval_results(test_queries, method=args.method, k=doc_n, retriever=retriever)
     print(f"Documents retrieved.")
 
@@ -283,7 +305,7 @@ def full_evaluation(args):
 
 if __name__=="__main__":
     parser = argparse.ArgumentParser(description="Evaluation")
-    parser.add_argument("--model_dir", type=str, default="../models/fid_t5",
+    parser.add_argument("--model_dir", type=str, default="../models/fid_t5", 
                         help="Model directory path")
     parser.add_argument("--k_values", type=int, nargs="+", default=[50],
                         help="List of cutoff values to use for metrics computation. (Highiest will be used as number of retrieved docs)")
@@ -293,5 +315,14 @@ if __name__=="__main__":
                         help="Validation file path")
     parser.add_argument("--metric", type=str, default="em", choices=METRICS.keys(),
                         help=f"Evaluation metric to use. Choices: {list(METRICS.keys())}. Default is 'em' (exact_match).")
+    parser.add_argument("--bm25_index_dir", type=str, help="Directory indice BM25 (PySerini)")
+    parser.add_argument("--faiss_index", type=str, help="Path indice FAISS (.faiss) per Contriever")
+    parser.add_argument("--collection", type=str, 
+                        help="Path JSONL collezione (id, contents) per Contriever")
+    parser.add_argument("--offsets", type=str, default=None, help="Offsets binari uint64 (opzionale)")
+    parser.add_argument("--nprobe", type=int, default=64, help="FAISS nprobe")
+    parser.add_argument("--in_memory", action="store_true", 
+                        help="Carica tutta la collezione in RAM (solo mini-run)")
+    parser.add_argument("--logs_dir", type=str, default="../logs", help="Directory per i log")
     args = parser.parse_args()
     full_evaluation(args)
