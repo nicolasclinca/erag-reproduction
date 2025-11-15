@@ -6,7 +6,7 @@ Utile per DenseRetriever con FAISS per recuperare rapidamente i documenti per ID
 
 Uso CLI:
 python build_offsets.py --collection ../data/collection/wikipedia_passages.jsonl \
-    --out ./index_out_full/collection_offsets.u64.bin
+    --offsets ./index_out_full/collection_offsets.u64.bin
 """
 
 import os, struct, argparse
@@ -31,6 +31,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Build offsets file for JSONL (one uint64 per line).",
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--collection", required=True, help="Path to JSONL (id, contents).")
-    parser.add_argument("--out", required=True, help="Path to write offsets (e.g., ./index_out/collection_offsets.u64.bin).")
+    parser.add_argument("--offsets", required=True, help="Path to write offsets (e.g., ./index_out/collection_offsets.u64.bin).")
     args = parser.parse_args()
-    build_offsets(args.collection, args.out)
+    build_offsets(args.collection, args.offsets)

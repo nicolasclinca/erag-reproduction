@@ -8,7 +8,7 @@ Requisiti:
 pip install torch faiss-cpu transformers
 
 Uso CLI:
-python build_contriever_indexes.py --input_jsonl ../data/collection/wikipedia_passages.jsonl \
+python build_contriever_indexes.py --collection ../data/collection/wikipedia_passages.jsonl \
     --out_dir ./index_out_full \
     --tune --tune_docs 100000 \
     --train_size 3000000 \
@@ -87,9 +87,9 @@ def read_contents_list(path: str, n: int) -> List[str]:
 
 
 # ---------------- Tuning bs ----------------
-def autotune_batch_size(encoder: ContrieverEncoder, input_jsonl: str, tune_docs: int, candidates: List[int]) -> int:
+def autotune_batch_size(encoder: ContrieverEncoder, collection: str, tune_docs: int, candidates: List[int]) -> int:
     log(f"[tune] Sampling {tune_docs} docs for tuning...")
-    sample = read_contents_list(input_jsonl, tune_docs)
+    sample = read_contents_list(collection, tune_docs)
     if len(sample) == 0:
         raise RuntimeError("Nessun documento nella collezione per il tuning.")
     log(f"[tune] Testing {len(candidates)} candidates...")
@@ -136,12 +136,12 @@ def autotune_batch_size(encoder: ContrieverEncoder, input_jsonl: str, tune_docs:
     return best_bs
 
 # ---------------- Training set ----------------
-def build_training_matrix(input_jsonl: str, encoder: ContrieverEncoder, train_size: int,
+def build_training_matrix(collection: str, encoder: ContrieverEncoder, train_size: int,
                           block_docs: int, bs: int) -> np.ndarray:
     log(f"[train] Building training set in RAM: target={train_size:,} | bs={bs}")
     X = np.empty((train_size, encoder.D), dtype=np.float32)
     total, t0, buf = 0, time.time(), []
-    for rec in iter_jsonl(input_jsonl):
+    for rec in iter_jsonl(collection):
         c = rec.get("contents", "").strip()
         if not c: 
             continue
@@ -225,7 +225,7 @@ def _save_progress(out_dir: str, last_line: int, ntotal: int) -> None:
     os.replace(tmp, p)
 
 # ---------------- Add streaming ----------------
-def add_streaming(input_jsonl: str, out_dir: str, index: faiss.IndexIDMap2,
+def add_streaming(collection: str, out_dir: str, index: faiss.IndexIDMap2,
                   encoder: ContrieverEncoder, add_block: int, index_filename: str,
                   bs: int, checkpoint_every: int = 0, resume: bool = True) -> int:
     """
@@ -274,7 +274,7 @@ def add_streaming(input_jsonl: str, out_dir: str, index: faiss.IndexIDMap2,
     block_idx = 0
     last_added_line = start_line - 1
 
-    with open(input_jsonl, "r", encoding="utf-8") as f:
+    with open(collection, "r", encoding="utf-8") as f:
         for i, line in enumerate(f):
             if i < start_line:
                 continue
@@ -345,10 +345,10 @@ def add_streaming(input_jsonl: str, out_dir: str, index: faiss.IndexIDMap2,
     return total_added
 
 # ---------------- Meta ----------------
-def write_meta(out_dir: str, input_jsonl: str, index_filename: str, best_bs: int, d: int,
+def write_meta(out_dir: str, collection: str, index_filename: str, best_bs: int, d: int,
                nlist: int, nprobe: int, m: int, nbits: int, meta_filename: str = META_FILENAME):
     meta = {
-        "collection_path": os.path.abspath(input_jsonl),
+        "collection_path": os.path.abspath(collection),
         "index_path": os.path.abspath(os.path.join(out_dir, index_filename)),
         "tuned_batch_size": best_bs,
         "m": m, "nbits": nbits, "nlist": nlist, "nprobe": nprobe,
@@ -391,7 +391,7 @@ def get_index_params_from_faiss(index: faiss.Index) -> dict:
 def main():
     parser = argparse.ArgumentParser(description="Build OPQ+IVF-PQ index from preprocessed JSONL, with bs tuning.",
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("--input_jsonl", required=True, help="File JSONL preprocessato (id, contents).")
+    parser.add_argument("--collection", required=True, help="File JSONL preprocessato (id, contents).")
     parser.add_argument("--out_dir", type=str, default="./index_out_full", 
                         help="Directory output (indice + meta).")
     parser.add_argument("--index_filename", type=str, default=INDEX_FILENAME,
@@ -413,7 +413,7 @@ def main():
     parser.add_argument("--checkpoint_every", type=int, default=0,
                         help="Scrivi un checkpoint su disco ogni N blocchi. 0 = solo al termine.")
     # fallback manuale se si vuole saltare il tuning:
-    parser.add_argument("--batch_size", type=int, default=BATCH_SIZE)
+    parser.add_argument("--encode_batch_size", type=int, default=BATCH_SIZE)
     args = parser.parse_args()
 
     set_env(); set_determinism(SEED)
@@ -431,9 +431,9 @@ def main():
         pass
 
     # 2) Tuning bs (opzionale)
-    best_bs = args.batch_size
+    best_bs = args.encode_batch_size
     if args.tune:
-        best_bs = autotune_batch_size(encoder, args.input_jsonl, tune_docs=args.tune_docs, candidates=TUNE_CANDIDATES)
+        best_bs = autotune_batch_size(encoder, args.collection, tune_docs=args.tune_docs, candidates=TUNE_CANDIDATES)
 
     # 3) Costruisci o carica indice
     index_path = os.path.join(args.out_dir, args.index_filename)
@@ -446,19 +446,19 @@ def main():
                                     index_filename=args.index_filename, resume=True)
     else:
         # Costruisci training set e indice da zero
-        X_train = build_training_matrix(args.input_jsonl, encoder, args.train_size,
+        X_train = build_training_matrix(args.collection, encoder, args.train_size,
                                         block_docs=args.train_block_docs, bs=best_bs)
         index = build_or_load_index(X_train, args.out_dir, args.nlist, args.m, args.nbits, args.nprobe,
                                     index_filename=args.index_filename, resume=args.resume)
 
     # 4) Add streaming con checkpoint opzionali (IDs = line index)
-    added = add_streaming(args.input_jsonl, args.out_dir, index, encoder, args.add_block, args.index_filename,
+    added = add_streaming(args.collection, args.out_dir, index, encoder, args.add_block, args.index_filename,
                           bs=best_bs, checkpoint_every=args.checkpoint_every, resume=args.resume)
     log(f"[done] ntotal={index.ntotal:,} | added_now={added:,}")
 
     # 5) Meta
     idx_params = get_index_params_from_faiss(index)
-    write_meta(args.out_dir, args.input_jsonl, args.index_filename, best_bs, encoder.D,
+    write_meta(args.out_dir, args.collection, args.index_filename, best_bs, encoder.D,
                nlist=idx_params["nlist"], nprobe=idx_params["nprobe"],
                m=idx_params["m"], nbits=idx_params["nbits"],
                meta_filename=args.meta_filename)

@@ -201,8 +201,8 @@ def main():
     parser.add_argument("--collection", required=True, help="Path JSONL preprocessato (id, contents)")
     parser.add_argument("--offsets", default=None, help="Offsets binari uint64 (opzionale, consigliato)")
     parser.add_argument("--query", required=True, help="Query text")
-    parser.add_argument("--k", type=int, default=5)
-    parser.add_argument("--nprobe", type=int, default=None)
+    parser.add_argument("--k", type=int, default=50)
+    parser.add_argument("--nprobe", type=int, default=64)
     parser.add_argument("--in_memory", action="store_true", help="Carica l'intera collezione in RAM (solo mini-run)")
     args = parser.parse_args()
 
