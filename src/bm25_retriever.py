@@ -34,7 +34,7 @@ from typing import List, Dict
 from pyserini.search.lucene import LuceneSearcher
 
 
-def bm25_retrieve(query: str, searcher: LuceneSearcher = None, k: int = 10) -> List[str]:
+def bm25_retrieve(query: str, searcher: LuceneSearcher = None, k: int = 50) -> List[str]:
     """
     Execute the search using Okapi BM25 implemented by PySerini
     :param query: user query
@@ -96,39 +96,18 @@ def create_bm25_searcher(index_dir: str) -> LuceneSearcher:
     return LuceneSearcher(index_dir)
 
 
-def _load_queries_file(path: str) -> List[str]:
-    with open(path, "r", encoding="utf-8") as f:
-        return [line.strip() for line in f if line.strip()]
-
-
 def main():
     parser = argparse.ArgumentParser(description="BM25 retrieval (PySerini) with optional batch mode and threads control.",
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--bm25_index_dir", required=True, help="Directory dell'indice BM25 (PySerini)")
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--query", type=str, help="Singola query da cercare")
-    group.add_argument("--queries_file", type=str, help="File di testo con una query per riga")
+    group.add_argument("--query", required=True, help="Singola query da cercare")
     parser.add_argument("--k", type=int, default=50, help="Numero di documenti da recuperare per query")
-    parser.add_argument("--batch_size", type=int, default=256, help="Batch size per batch_search")
-    parser.add_argument("--threads", type=int, default=8, 
-                        help="Numero di thread per PySerini batch_search")
     args = parser.parse_args()
 
     searcher = create_bm25_searcher(args.bm25_index_dir)
-
-    if args.query is not None:
-        docs = bm25_retrieve(args.query, searcher=searcher, k=args.k)
-        print(json.dumps({args.query: docs}, ensure_ascii=False, indent=2))
-    else:
-        queries = _load_queries_file(args.queries_file)
-        results = bm25_batch_retrieve(
-            queries=queries,
-            searcher=searcher,
-            k=args.k,
-            batch_size=args.batch_size,
-            threads=args.threads,
-        )
-        print(json.dumps(results, ensure_ascii=False, indent=2))
+    docs = bm25_retrieve(args.query, searcher=searcher, k=args.k)
+    print(json.dumps({args.query: docs}, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

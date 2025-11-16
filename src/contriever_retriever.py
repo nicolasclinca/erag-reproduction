@@ -143,7 +143,7 @@ class DenseRetriever:
         self.collection = JsonlCollection(collection_path, offsets_path=offsets_path, in_memory=in_memory)
         self.encoder = ContrieverEncoder(model_name=model_name, device=device, max_length=max_length, dtype=dtype)
 
-    def dense_retrieve(self, query: str, k: int = 5, return_cosine: bool = True) -> Dict:
+    def dense_retrieve(self, query: str, k: int = 50, return_cosine: bool = True) -> Dict:
         q = self.encoder.encode([query], batch_size=1).astype(np.float32)
         D, I = self.index.search(q, k)  # L2 su vettori normalizzati
         ids = [int(x) for x in I[0]]
@@ -154,7 +154,7 @@ class DenseRetriever:
             out["approx_cosine"] = [1.0 - 0.5 * d for d in dists]
         return out
 
-    def batch_dense_retrieve(self, queries: List[str], k: int = 5, batch_size: int = 8, return_cosine: bool = True) -> List[Dict]:
+    def batch_dense_retrieve(self, queries: List[str], k: int = 50, batch_size: int = 8, return_cosine: bool = True) -> List[Dict]:
         Q = self.encoder.encode(queries, batch_size=min(64, max(1, batch_size))).astype(np.float32)
         D, I = self.index.search(Q, k)
         

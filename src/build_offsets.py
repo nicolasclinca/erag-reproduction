@@ -31,6 +31,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Build offsets file for JSONL (one uint64 per line).",
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--collection", required=True, help="Path to JSONL (id, contents).")
-    parser.add_argument("--offsets", required=True, help="Path to write offsets (e.g., ./index_out/collection_offsets.u64.bin).")
+    parser.add_argument("--offsets", required=True, 
+                        help="Path to write offsets (e.g., ./index_out/collection_offsets.u64.bin).")
     args = parser.parse_args()
     build_offsets(args.collection, args.offsets)
