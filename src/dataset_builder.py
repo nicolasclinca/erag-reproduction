@@ -77,11 +77,15 @@ def create_retriever(method='BM25', bm25_index_dir=None, faiss_index=None,
     if method == 'BM25':
         if not bm25_index_dir:
             raise ValueError("--bm25_index_dir è obbligatorio con --method BM25")
-        retriever = create_bm25_searcher(args.bm25_index_dir)
+        retriever = create_bm25_searcher(bm25_index_dir)
     elif method == 'Contriever':
-        missing = [x for x in ("faiss_index", "collection") if getattr(args, x) in (None, "")]
+        missing = []
+        if not faiss_index:
+            missing.append("--faiss_index")
+        if not collection:
+            missing.append("--collection")
         if missing:
-            raise ValueError(f"Con --method Contriever servono: --faiss_index e --collection (mancanti: {missing})")
+            raise ValueError(f"Con --method Contriever servono: --faiss_index e --collection (mancanti: {', '.join(missing)})")
         retriever = DenseRetriever(
                 index_path=faiss_index,
                 collection_path=collection,
@@ -89,6 +93,8 @@ def create_retriever(method='BM25', bm25_index_dir=None, faiss_index=None,
                 nprobe=nprobe,
                 in_memory=in_memory
             )
+    else:
+        raise ValueError(f"Unknown method: {method}")
     return retriever
 
 
