@@ -19,6 +19,7 @@ import numpy as np
 import torch
 import faiss
 import mmap, struct
+
 from contriever_encoder import (ContrieverEncoder, MODEL_NAME, MAX_LENGTH, DTYPE)
 
 

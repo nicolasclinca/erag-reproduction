@@ -24,6 +24,7 @@ from typing import Iterator, List
 import numpy as np
 import torch
 import faiss
+
 from contriever_encoder import (ContrieverEncoder, MODEL_NAME, MAX_LENGTH, DTYPE)
 
 

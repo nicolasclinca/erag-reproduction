@@ -8,11 +8,12 @@ Encoder Contriever centralizzato per indicizzazione e retrieval.
 """
 
 from typing import List, Optional
+import threading, queue
+
 import numpy as np
 import torch
 import torch.nn.functional as F
 from transformers import AutoTokenizer, AutoModel
-import threading, queue
 
 # Default condivisi
 MODEL_NAME = "facebook/contriever"

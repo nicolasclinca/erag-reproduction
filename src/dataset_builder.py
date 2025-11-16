@@ -24,10 +24,11 @@ python data_loader.py --datasets ../data/nq-train-kilt.jsonl \
 """
 
 import json
-from bm25_retriever import bm25_batch_retrieve, create_bm25_searcher
 import argparse
 import os
+
 from contriever_retriever import DenseRetriever
+from bm25_retriever import bm25_batch_retrieve, create_bm25_searcher
 
 
 def load_expected_outputs(filename):

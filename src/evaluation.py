@@ -33,13 +33,14 @@ python evaluation.py --model_dir ../models/fid_t5 \
 import json
 import re
 import torch
-import erag_mod
 import os
-import scipy.stats as stats
 from functools import partial
 import argparse
+
+import scipy.stats as stats
 from transformers import T5Tokenizer, T5ForConditionalGeneration
 
+import erag_mod
 from dataset_builder import retrieval_results, load_expected_outputs, create_retriever
 from fid_t5 import t5_fid_generator
 from metrics import exact_match_metric, f1_metric
