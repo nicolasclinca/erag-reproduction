@@ -57,7 +57,7 @@ def retrieval_results(queries, method='BM25', k=50, retriever=None, batch_size=2
         raise ValueError(f"Unknown method: {method}")
 
 
-def augment_with_retrieved_documents(dataset, retrieved_results):
+def augment_with_documents(dataset, retrieved_results):
     """
     Restituisce una lista di dizionari nel formato:
         {"query": str,
@@ -120,7 +120,7 @@ def augment_datasets(args):
             )
 
         # Augment e salvataggio
-        augmented = augment_with_retrieved_documents(expected_outputs, retrieved_results)
+        augmented = augment_with_documents(expected_outputs, retrieved_results)
         dirn = args.augmented_datasets if args.augmented_datasets else (os.path.dirname(dataset_path) or ".")
         os.makedirs(dirn, exist_ok=True)
         base = os.path.splitext(os.path.basename(dataset_path))[0]
