@@ -21,11 +21,6 @@ Singola query:
 python bm25_retriever.py --bm25_index_dir ../indexes/bm25_index \
     --query "When did Apollo 11 land?" \
     --k 5 --threads 8
-
-File con query (una per riga):
-python bm25_retriever.py --bm25_index_dir ../indexes/bm25_index \
-    --queries_file ./queries.txt \
-    --k 50 --batch_size 256 --threads 8
 """
 
 import json
@@ -100,8 +95,7 @@ def main():
     parser = argparse.ArgumentParser(description="BM25 retrieval (PySerini) with optional batch mode and threads control.",
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--bm25_index_dir", required=True, help="Directory dell'indice BM25 (PySerini)")
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--query", required=True, help="Singola query da cercare")
+    parser.add_argument("--query", required=True, help="Singola query da cercare")
     parser.add_argument("--k", type=int, default=50, help="Numero di documenti da recuperare per query")
     args = parser.parse_args()
 
