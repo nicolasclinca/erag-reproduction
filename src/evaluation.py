@@ -203,8 +203,8 @@ def define_retrieval_metrics(k_values, metric):
 
 def full_evaluation(args):
     # 0) Preparazione log directory
-    LOG_DIR = args.logs_dir
-    os.makedirs(LOG_DIR, exist_ok=True)
+    log_dir = args.logs_dir
+    os.makedirs(log_dir, exist_ok=True)
     
     # 1) Definizione metriche
     doc_n, retrieval_metrics = define_retrieval_metrics(args.k_values, args.metric)
@@ -255,7 +255,7 @@ def full_evaluation(args):
         downstream_metric_func=selected_metric_func,
         retrieval_metrics=retrieval_metrics,
         method=args.method,
-        log_dir=LOG_DIR
+        log_dir=log_dir
     )
 
     # 6) Valutazione end-to-end per ogni k in k_values
@@ -267,7 +267,7 @@ def full_evaluation(args):
         test_queries=test_queries,
         method=args.method,
         k_values=args.k_values,
-        log_dir=LOG_DIR
+        log_dir=log_dir
     )
 
     # 7) Correlazioni tra metriche eRAG e punteggi end-to-end
@@ -277,7 +277,7 @@ def full_evaluation(args):
         all_e2e_scores=all_e2e_scores,
         method=args.method,
         doc_n=doc_n,
-        log_dir=LOG_DIR
+        log_dir=log_dir
     )
 
     return {
