@@ -1,5 +1,5 @@
 """
-data_loader.py
+dataset_builder.py
 Caricamento dataset KILT e creazione di dataset augmented con documenti retrieved.
 Formato output: [{"query": str, "retrieved_docs": [doc1, ...], "gold_answer": str}, ...]
 Supporta BM25 e Contriever per il retrieval.
@@ -7,13 +7,13 @@ Supporta BM25 e Contriever per il retrieval.
 Uso CLI:
 
 BM25
-python data_loader.py --datasets ../data/nq-train-kilt.jsonl \
+python dataset_builder.py --datasets ../data/nq-train-kilt.jsonl \
     --method BM25 \
     --bm25_index_dir ../indexes/bm25_index \
     --k 50
     
 Contriever
-python data_loader.py --datasets ../data/nq-train-kilt.jsonl \
+python dataset_builder.py --datasets ../data/nq-train-kilt.jsonl \
     --method Contriever \
     --faiss_index ./index_out_full/ivfpq_opq_contriever.faiss \
     --collection ../data/collection/wikipedia_passages.jsonl \
