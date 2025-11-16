@@ -24,11 +24,10 @@ python data_loader.py --datasets ../data/nq-train-kilt.jsonl \
 """
 
 import json
-from bm25_retriever import bm25_batch_retrieve
+from bm25_retriever import bm25_batch_retrieve, create_bm25_searcher
 import argparse
 import os
 from contriever_retriever import DenseRetriever
-from pyserini.search.lucene import LuceneSearcher
 
 
 def load_expected_outputs(filename):
@@ -71,12 +70,13 @@ def augment_with_documents(dataset, retrieved_results):
         augmented_data.append({"query": query, "retrieved_docs": retrieved_docs, "gold_answer": target_text})
     return augmented_data
 
+
 def create_retriever(method='BM25', bm25_index_dir=None, faiss_index=None,
                      collection=None, offsets=None, nprobe=64, in_memory=False):
     if method == 'BM25':
         if not bm25_index_dir:
             raise ValueError("--bm25_index_dir è obbligatorio con --method BM25")
-        retriever = LuceneSearcher(bm25_index_dir)
+        retriever = create_bm25_searcher(args.bm25_index_dir)
     elif method == 'Contriever':
         missing = [x for x in ("faiss_index", "collection") if getattr(args, x) in (None, "")]
         if missing:

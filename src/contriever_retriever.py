@@ -19,9 +19,7 @@ import numpy as np
 import torch
 import faiss
 import mmap, struct
-from contriever_encoder import (
-    ContrieverEncoder, MODEL_NAME, MAX_LENGTH, DTYPE
-)
+from contriever_encoder import (ContrieverEncoder, MODEL_NAME, MAX_LENGTH, DTYPE)
 
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")

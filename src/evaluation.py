@@ -37,11 +37,11 @@ import erag_mod
 import os
 import scipy.stats as stats
 from functools import partial
-from transformers import T5Tokenizer, T5ForConditionalGeneration
-from data_loader import retrieval_results, load_expected_outputs
 import argparse
+from transformers import T5Tokenizer, T5ForConditionalGeneration
+
+from dataset_builder import retrieval_results, load_expected_outputs, create_retriever
 from fid_t5 import t5_fid_generator
-from data_loader import create_retriever
 from metrics import exact_match_metric, f1_metric
 
 
