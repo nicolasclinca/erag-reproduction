@@ -41,8 +41,7 @@ from transformers import T5Tokenizer, T5ForConditionalGeneration
 from data_loader import retrieval_results, load_expected_outputs
 import argparse
 from fid_t5 import t5_fid_generator
-from contriever_retriever import DenseRetriever
-from pyserini.search.lucene import LuceneSearcher
+from data_loader import create_retriever
 from metrics import exact_match_metric, f1_metric
 
 
@@ -220,22 +219,9 @@ def full_evaluation(args):
 
     # 3) Retrieval sui dati di test
     print(f"Retrieving {doc_n} documents per query using: {args.method}")
-    retriever = None
-    if args.method == 'BM25':
-        if not args.bm25_index_dir:
-            raise ValueError("--bm25_index_dir è obbligatorio con --method BM25")
-        retriever = LuceneSearcher(args.bm25_index_dir)
-    elif args.method == 'Contriever':
-        missing = [x for x in ("faiss_index", "collection") if getattr(args, x) in (None, "")]
-        if missing:
-            raise ValueError(f"Con --method Contriever servono: --faiss_index e --collection (mancanti: {missing})")
-        retriever = DenseRetriever(
-            index_path=args.faiss_index,
-            collection_path=args.collection,
-            offsets_path=args.offsets,
-            nprobe=args.nprobe,
-            in_memory=args.in_memory
-            )
+    retriever = create_retriever(method=args.method, bm25_index_dir=args.bm25_index_dir, 
+                                 faiss_index=args.faiss_index, collection=args.collection, 
+                                 offsets=args.offsets, nprobe=args.nprobe, in_memory=args.in_memory)
     test_retrieval_results = retrieval_results(test_queries, method=args.method, k=doc_n, retriever=retriever)
     print(f"Documents retrieved.")
 

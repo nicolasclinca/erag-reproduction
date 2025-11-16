@@ -67,9 +67,28 @@ def augment_with_documents(dataset, retrieved_results):
     augmented_data = []
     for query, gold_answers in dataset.items():
         retrieved_docs = retrieved_results.get(query, [])
-        target_text = gold_answers[0] # Since it's a multi-answer task, we will only take the first answer
+        target_text = gold_answers[0] # We will only take the first answer
         augmented_data.append({"query": query, "retrieved_docs": retrieved_docs, "gold_answer": target_text})
     return augmented_data
+
+def create_retriever(method='BM25', bm25_index_dir=None, faiss_index=None,
+                     collection=None, offsets=None, nprobe=64, in_memory=False):
+    if method == 'BM25':
+        if not bm25_index_dir:
+            raise ValueError("--bm25_index_dir è obbligatorio con --method BM25")
+        retriever = LuceneSearcher(bm25_index_dir)
+    elif method == 'Contriever':
+        missing = [x for x in ("faiss_index", "collection") if getattr(args, x) in (None, "")]
+        if missing:
+            raise ValueError(f"Con --method Contriever servono: --faiss_index e --collection (mancanti: {missing})")
+        retriever = DenseRetriever(
+                index_path=faiss_index,
+                collection_path=collection,
+                offsets_path=offsets,
+                nprobe=nprobe,
+                in_memory=in_memory
+            )
+    return retriever
 
 
 def augment_datasets(args):
@@ -83,22 +102,9 @@ def augment_datasets(args):
     """
 
     # Istanzia il retriever
-    retriever = None
-    if args.method == 'BM25':
-        if not args.bm25_index_dir:
-            raise ValueError("--bm25_index_dir è obbligatorio con --method BM25")
-        retriever = LuceneSearcher(args.bm25_index_dir)
-    elif args.method == 'Contriever':
-        missing = [x for x in ("faiss_index", "collection") if getattr(args, x) in (None, "")]
-        if missing:
-            raise ValueError(f"Con --method Contriever servono: --faiss_index e --collection (mancanti: {missing})")
-        retriever = DenseRetriever(
-                index_path=args.faiss_index,
-                collection_path=args.collection,
-                offsets_path=args.offsets,
-                nprobe=args.nprobe,
-                in_memory=args.in_memory
-            )
+    retriever = create_retriever(method=args.method, bm25_index_dir=args.bm25_index_dir, 
+                                 faiss_index=args.faiss_index, collection=args.collection, 
+                                 offsets=args.offsets, nprobe=args.nprobe, in_memory=args.in_memory)
 
     for dataset_path in args.datasets:
         if not os.path.exists(dataset_path):
@@ -111,13 +117,8 @@ def augment_datasets(args):
         print(f"Loaded {len(queries)} queries")
 
         # Retrieval
-        retrieved_results = retrieval_results(
-            queries=queries,
-            method=args.method,
-            k=args.k,
-            retriever=retriever,
-            batch_size=args.batch_size,
-            )
+        retrieved_results = retrieval_results(queries=queries, method=args.method, k=args.k,
+                                              retriever=retriever, batch_size=args.batch_size)
 
         # Augment e salvataggio
         augmented = augment_with_documents(expected_outputs, retrieved_results)
