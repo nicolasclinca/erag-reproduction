@@ -7,8 +7,8 @@ prima del decoder per generare la risposta finale.
 Uso CLI:
 
 Training
-python fid_t5.py train --train_path ../data/train_augmented.json \
-    --output_dir ./models/fid_t5 \
+python fid_t5.py train --augmented_datasets ../data/train_augmented.json \
+    --model_dir ./models/fid_t5 \
     --model_name t5-small \
     --num_epochs 10 \
     --per_device_batch_size 1 \
@@ -256,7 +256,7 @@ def train(args):
     model.to(device)
 
     # Datasets e Dataloaders
-    with open(args.train_path, "r", encoding="utf-8") as f:
+    with open(args.augmented_datasets, "r", encoding="utf-8") as f:
         train_data = json.load(f)
     print("Loading dataset...")
     train_ds = QA_Dataset_FiD(train_data, require_answer=True)
@@ -314,7 +314,7 @@ def train(args):
     scaler = torch.cuda.amp.GradScaler(enabled=(args.amp and device.type == "cuda"))
 
     global_step = 0
-    os.makedirs(args.output_dir, exist_ok=True)
+    os.makedirs(args.model_dir, exist_ok=True)
 
     for epoch in range(1, args.num_epochs + 1):
         model.train()
@@ -392,16 +392,16 @@ def train(args):
 
         # Checkpoint per-epoca (opzionale)
         if args.save_every_epoch:
-            save_dir = os.path.join(args.output_dir, f"epoch_{epoch}")
+            save_dir = os.path.join(args.model_dir, f"epoch_{epoch}")
             os.makedirs(save_dir, exist_ok=True)
             model.save_pretrained(save_dir)
             tokenizer.save_pretrained(save_dir)
             print(f"Saved epoch checkpoint to: {save_dir}")
         elif epoch == args.num_epochs:
             # Salva il modello finale
-            model.save_pretrained(args.output_dir)
-            tokenizer.save_pretrained(args.output_dir)
-            print(f"Saved final model to: {args.output_dir}")
+            model.save_pretrained(args.model_dir)
+            tokenizer.save_pretrained(args.model_dir)
+            print(f"Saved final model to: {args.model_dir}")
 
         # Cleanup
         gc.collect()
@@ -518,8 +518,8 @@ def main():
 
     # Train
     p_train = subparsers.add_parser("train", help="Train a T5 FiD model")
-    p_train.add_argument("--train_path", type=str, required=True, help="Path to train JSON")
-    p_train.add_argument("--output_dir", type=str, default="./models/fid_t5", help="Output dir")
+    p_train.add_argument("--augmented_datasets", type=str, required=True, help="Path to train JSON")
+    p_train.add_argument("--model_dir", type=str, default="./models/fid_t5", help="Output dir")
     p_train.add_argument("--model_name", type=str, default="t5-small", help="HF model name or path")
     p_train.add_argument("--num_epochs", type=int, default=10)
     p_train.add_argument("--per_device_batch_size", type=int, default=1)
@@ -540,7 +540,7 @@ def main():
 
     # Generate
     p_gen = subparsers.add_parser("generate", help="Run inference with a trained T5 FiD model")
-    p_gen.add_argument("--model_dir", type=str, required=True, help="Path to saved model (e.g., output_dir/epoch_x)")
+    p_gen.add_argument("--model_dir", type=str, required=True, help="Path to saved model (e.g., model_dir/epoch_x)")
     p_gen.add_argument("--input_json", type=str, required=True, help="JSON file {query: [docs,...]}")
     p_gen.add_argument("--output_json", type=str, required=True, help="Where to save {query: answer}")
     p_gen.add_argument("--max_input_len", type=int, default=256)

@@ -9,14 +9,14 @@ Output: ../data/collection/wikipedia_passages.jsonl
 Uso CLI:
 
 Download completo (~5.9M articoli → ~108M passaggi)
-python preprocess_wikipedia.py --output ../data/collection/wikipedia_passages.jsonl
+python preprocess_wikipedia.py --collection ../data/collection/wikipedia_passages.jsonl
 
 Limita a N record (per test/debug)
-python preprocess_wikipedia.py --max_record 10000 --output ../data/collection/wiki_small.jsonl
+python preprocess_wikipedia.py --max_record 10000 --collection ../data/collection/wiki_small.jsonl
 
 Con throttling e buffer personalizzato
 python preprocess_wikipedia.py --buffer_size 1000000 --throttle \
-    --output ../data/collection/wikipedia_passages.jsonl
+    --collection ../data/collection/wikipedia_passages.jsonl
 """
 
 import json
@@ -63,16 +63,17 @@ def process_kilt_page(page_json, max_words=100):
     return docs
 
 
-def process_source_request(url, out_path, args):
+def process_source_request(args):
     """
     Process an entire dataset from an Internet source
-    :param url: link to the dataset
-    :param out_path: path to the output file
-    :param args: argparse arguments containing buffer_size, max_record, and throttle
+    :param args: argparse arguments containing url, output path (collection), buffer_size, max_record,
+        and throttle
     :return: number of processed records
     """
     
     processed = 0
+    url = args.url
+    out_path = args.collection
     max_records = args.max_record
     buffer_size = args.buffer_size
     throttle = args.throttle
@@ -124,7 +125,7 @@ if __name__=="__main__":
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--url", type=str, default="http://dl.fbaipublicfiles.com/KILT/kilt_knowledgesource.json",
                         help="URL della knowledge source KILT")
-    parser.add_argument("--output", type=str, default="../data/collection/wikipedia_passages.jsonl",
+    parser.add_argument("--collection", type=str, default="../data/collection/wikipedia_passages.jsonl",
                         help="Path di output JSONL")
     parser.add_argument("--max_record", type=int, default=0,
                         help="Number of record taken from the Wikipedia Dump (for smaller wikipedia dump). Default is 0 (no limit).")
@@ -133,4 +134,4 @@ if __name__=="__main__":
     parser.add_argument("--throttle", action="store_true",
                         help="Enable throttling (sleep 0.5s after each buffer flush).")
     args = parser.parse_args()
-    process_source_request(args.url, args.output, args)
+    process_source_request(args)

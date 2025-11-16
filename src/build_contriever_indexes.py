@@ -9,7 +9,7 @@ pip install torch faiss-cpu transformers
 
 Uso CLI:
 python build_contriever_indexes.py --collection ../data/collection/wikipedia_passages.jsonl \
-    --out_dir ./index_out_full \
+    --faiss_index_dir ./index_out_full \
     --tune --tune_docs 100000 \
     --train_size 3000000 \
     --resume
@@ -392,12 +392,12 @@ def main():
     parser = argparse.ArgumentParser(description="Build OPQ+IVF-PQ index from preprocessed JSONL, with bs tuning.",
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--collection", required=True, help="File JSONL preprocessato (id, contents).")
-    parser.add_argument("--out_dir", type=str, default="./index_out_full", 
+    parser.add_argument("--faiss_index_dir", type=str, default="./index_out_full", 
                         help="Directory output (indice + meta).")
     parser.add_argument("--index_filename", type=str, default=INDEX_FILENAME,
-                        help="Nome del file indice FAISS salvato in out_dir.")
+                        help="Nome del file indice FAISS salvato in faiss_index_dir.")
     parser.add_argument("--meta_filename", type=str, default=META_FILENAME,
-                        help="Nome del file metadata JSON salvato in out_dir.")
+                        help="Nome del file metadata JSON salvato in faiss_index_dir.")
     parser.add_argument("--tune", action="store_true", 
                         help="Esegui tuning bs su un subset prima del build.")
     parser.add_argument("--tune_docs", type=int, default=TUNE_DOCS, 
@@ -418,7 +418,7 @@ def main():
 
     set_env(); set_determinism(SEED)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    log(f"[env] device={device} | out_dir={args.out_dir}")
+    log(f"[env] device={device} | out_dir={args.faiss_index_dir}")
 
     # Encoder (unico, riusato per tuning/train/add)
     encoder = ContrieverEncoder(MODEL_NAME, device, MAX_LENGTH, DTYPE)
@@ -436,29 +436,30 @@ def main():
         best_bs = autotune_batch_size(encoder, args.collection, tune_docs=args.tune_docs, candidates=TUNE_CANDIDATES)
 
     # 3) Costruisci o carica indice
-    index_path = os.path.join(args.out_dir, args.index_filename)
+    index_path = os.path.join(args.faiss_index_dir, args.index_filename)
     index_exists = args.resume and os.path.exists(index_path)
 
     if index_exists:
         # Carica direttamente l’indice
         index = build_or_load_index(np.empty((0, encoder.D), dtype=np.float32),
-                                    args.out_dir, args.nlist, args.m, args.nbits, args.nprobe,
+                                    args.faiss_index_dir, args.nlist, args.m, args.nbits, args.nprobe,
                                     index_filename=args.index_filename, resume=True)
     else:
         # Costruisci training set e indice da zero
         X_train = build_training_matrix(args.collection, encoder, args.train_size,
                                         block_docs=args.train_block_docs, bs=best_bs)
-        index = build_or_load_index(X_train, args.out_dir, args.nlist, args.m, args.nbits, args.nprobe,
-                                    index_filename=args.index_filename, resume=args.resume)
+        index = build_or_load_index(X_train, args.faiss_index_dir, args.nlist, args.m, args.nbits,
+                                    args.nprobe, index_filename=args.index_filename, resume=args.resume)
 
     # 4) Add streaming con checkpoint opzionali (IDs = line index)
-    added = add_streaming(args.collection, args.out_dir, index, encoder, args.add_block, args.index_filename,
-                          bs=best_bs, checkpoint_every=args.checkpoint_every, resume=args.resume)
+    added = add_streaming(args.collection, args.faiss_index_dir, index, encoder, args.add_block,
+                          args.index_filename, bs=best_bs, checkpoint_every=args.checkpoint_every, 
+                          resume=args.resume)
     log(f"[done] ntotal={index.ntotal:,} | added_now={added:,}")
 
     # 5) Meta
     idx_params = get_index_params_from_faiss(index)
-    write_meta(args.out_dir, args.collection, args.index_filename, best_bs, encoder.D,
+    write_meta(args.faiss_index_dir, args.collection, args.index_filename, best_bs, encoder.D,
                nlist=idx_params["nlist"], nprobe=idx_params["nprobe"],
                m=idx_params["m"], nbits=idx_params["nbits"],
                meta_filename=args.meta_filename)

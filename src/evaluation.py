@@ -13,7 +13,7 @@ python evaluation.py --model_dir ../models/fid_t5 \
     --k_values 10 30 50 \
     --method BM25 \
     --bm25_index_dir ../indexes/bm25_index \
-    --test_dataset_path ../data/nq-dev-kilt.jsonl \
+    --dataset ../data/nq-dev-kilt.jsonl \
     --metric em \
     --logs_dir ../logs
 
@@ -25,7 +25,7 @@ python evaluation.py --model_dir ../models/fid_t5 \
     --collection ../data/collection/wikipedia_passages.jsonl \
     --offsets ./index_out_full/collection_offsets.u64.bin \
     --nprobe 64 \
-    --test_dataset_path ../data/nq-dev-kilt.jsonl \
+    --dataset ../data/nq-dev-kilt.jsonl \
     --metric em \
     --logs_dir ../logs
 """
@@ -213,8 +213,8 @@ def full_evaluation(args):
     print(f"\nUsing evaluation metric: {args.metric.upper()}")
 
     # 2) Caricamento dataset di test
-    print(f"Loading test dataset queries and expected outputs from: {args.test_dataset_path}")
-    expected_outputs = load_expected_outputs(args.test_dataset_path)
+    print(f"Loading test dataset queries and expected outputs from: {args.dataset}")
+    expected_outputs = load_expected_outputs(args.dataset)
     test_queries = sorted(list(expected_outputs.keys()))
     print(f"Loaded {len(test_queries)} test queries.") 
 
@@ -311,7 +311,7 @@ if __name__=="__main__":
                         help="List of cutoff values to use for metrics computation. (Highiest will be used as number of retrieved docs)")
     parser.add_argument("--method", type=str, default="BM25", choices=["BM25", "Contriever"],
                         help="Retrieval method to use (BM25 or Contriever). Default is 'BM25'.")
-    parser.add_argument("--test_dataset_path", type=str, default="../data/nq-dev-kilt.jsonl",
+    parser.add_argument("--dataset", type=str, default="../data/nq-dev-kilt.jsonl",
                         help="Validation file path")
     parser.add_argument("--metric", type=str, default="em", choices=METRICS.keys(),
                         help=f"Evaluation metric to use. Choices: {list(METRICS.keys())}. Default is 'em' (exact_match).")

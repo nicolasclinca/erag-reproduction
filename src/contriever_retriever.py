@@ -211,8 +211,8 @@ def main():
                           offsets_path=args.offsets,
                           nprobe=args.nprobe,
                           in_memory=args.in_memory)
-    res = retr.dense_retrieve(args.query, k=args.k, return_cosine=True)
-    print(json.dumps(res, ensure_ascii=False, indent=2))
+    results = retr.dense_retrieve(args.query, k=args.k, return_cosine=True)
+    print(json.dumps(results, ensure_ascii=False, indent=2))
 
 if __name__ == "__main__":
     main()
