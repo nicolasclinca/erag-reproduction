@@ -132,7 +132,7 @@ def augment_datasets(args):
         dirn = args.augmented_datasets if args.augmented_datasets else (os.path.dirname(dataset_path) or ".")
         os.makedirs(dirn, exist_ok=True)
         base = os.path.splitext(os.path.basename(dataset_path))[0]
-        out_path = os.path.join(dirn, f"{base}-augmented.json")
+        out_path = os.path.join(dirn, f"{base}-augmented-{args.method}.json")
 
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(augmented, f, indent=4)
