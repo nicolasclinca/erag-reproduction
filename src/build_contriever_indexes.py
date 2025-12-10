@@ -399,8 +399,7 @@ def main():
                         help="Nome del file metadata JSON salvato in faiss_index_dir.")
     parser.add_argument("--tune", action="store_true", 
                         help="Esegui tuning bs su un subset prima del build.")
-    parser.add_argument("--tune_docs", type=int, default=TUNE_DOCS, 
-                        help="#docs per tuning.")
+    parser.add_argument("--tune_docs", type=int, default=TUNE_DOCS, help="#docs per tuning.")
     parser.add_argument("--train_size", type=int, default=TRAIN_SIZE)
     parser.add_argument("--train_block_docs", type=int, default=TRAIN_BLOCK_DOCS)
     parser.add_argument("--add_block", type=int, default=ADD_BLOCK)

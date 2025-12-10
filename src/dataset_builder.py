@@ -55,9 +55,30 @@ def retrieval_results(queries, method='BM25', k=50, retriever=None, batch_size=2
         return retriever.contriever_batch_retrieve(queries=queries, k=k, batch_size=batch_size)
     else:
         raise ValueError(f"Unknown method: {method}")
+    
+
+def select_answer(gold_answers, max_words=250):
+    """
+    Seleziona una singola risposta da una lista di risposte gold.
+    - Prima risposta con <= max_words parole.
+    - Se nessuna soddisfa il vincolo, prende la risposta più breve.
+    """
+    if not gold_answers:
+        return ""
+    valid_answers = [a for a in gold_answers if isinstance(a, str) and a.strip()]
+    if not valid_answers:
+        return gold_answers[0]
+
+    lengths = [len(a.split()) for a in valid_answers]
+
+    for ans, l in zip(valid_answers, lengths):
+        if l <= max_words:
+            return ans
+    min_idx = min(range(len(valid_answers)), key=lambda i: lengths[i])
+    return valid_answers[min_idx]
 
 
-def augment_with_documents(dataset, retrieved_results):
+def augment_with_documents(dataset, retrieved_results, max_words):
     """
     Restituisce una lista di dizionari nel formato:
         {"query": str,
@@ -67,8 +88,12 @@ def augment_with_documents(dataset, retrieved_results):
     augmented_data = []
     for query, gold_answers in dataset.items():
         retrieved_docs = retrieved_results.get(query, [])
-        target_text = gold_answers[0] # We will only take the first answer
-        augmented_data.append({"query": query, "retrieved_docs": retrieved_docs, "gold_answer": target_text})
+        target_text = select_answer(gold_answers, max_words)
+        augmented_data.append({
+            "query": query,
+            "retrieved_docs": retrieved_docs,
+            "gold_answer": target_text
+        })
     return augmented_data
 
 
@@ -128,7 +153,7 @@ def augment_datasets(args):
                                               retriever=retriever, batch_size=args.batch_size)
 
         # Augment e salvataggio
-        augmented = augment_with_documents(expected_outputs, retrieved_results)
+        augmented = augment_with_documents(expected_outputs, retrieved_results, args.max_answer_words)
         dirn = args.augmented_datasets if args.augmented_datasets else (os.path.dirname(dataset_path) or ".")
         os.makedirs(dirn, exist_ok=True)
         base = os.path.splitext(os.path.basename(dataset_path))[0]
@@ -161,6 +186,8 @@ if __name__ == "__main__":
     parser.add_argument("--nprobe", type=int, default=64, help="FAISS nprobe")
     parser.add_argument("--in_memory", action="store_true", 
         help="Carica tutta la collezione in RAM (solo mini-run)")
+    parser.add_argument("--max_answer_words", type=int, default=250,
+        help="Numero massimo di parole per la risposta (default: 250).")    
     args = parser.parse_args()
     augment_datasets(args)
     print("Process completed.")
