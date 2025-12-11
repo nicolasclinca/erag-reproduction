@@ -42,7 +42,8 @@ def bm25_retrieve(query: str, searcher: LuceneSearcher = None, k: int = 50) -> L
 
     top_contents = []
     for hit in hits:
-        jsondoc = json.loads(hit.raw)
+        doc = searcher.doc(hit.docid)
+        jsondoc = json.loads(doc.raw())
         top_contents.append(jsondoc["contents"])
 
     return top_contents
@@ -79,7 +80,8 @@ def bm25_batch_retrieve(
 
             top_contents: List[str] = []
             for hit in hits:
-                jsondoc = json.loads(hit.raw)
+                doc = searcher.doc(hit.docid)
+                jsondoc = json.loads(doc.raw())
                 top_contents.append(jsondoc["contents"])
 
             results[query] = top_contents
