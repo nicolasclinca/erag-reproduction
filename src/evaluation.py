@@ -291,7 +291,8 @@ def full_evaluation(args):
 
 
 if __name__=="__main__":
-    parser = argparse.ArgumentParser(description="Evaluation", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser = argparse.ArgumentParser(description="Evaluation",
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--model_dir", type=str, default="./models/fid_t5", 
                         help="Model directory path")
     parser.add_argument("--k_values", type=int, nargs="+", default=[50],

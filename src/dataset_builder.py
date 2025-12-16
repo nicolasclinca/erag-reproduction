@@ -43,18 +43,6 @@ def load_expected_outputs(filename):
             if golds:
                 expected[query] = golds
     return expected
-
-
-def retrieval_results(queries, method='BM25', k=50, retriever=None, batch_size=256):
-    """
-    Restituisce {query: [doc1, doc2, ..., dock]}.
-    """
-    if method == 'BM25':
-        return bm25_batch_retrieve(queries, searcher=retriever, k=k, batch_size=batch_size)
-    elif method == 'Contriever':
-        return retriever.contriever_batch_retrieve(queries=queries, k=k, batch_size=batch_size)
-    else:
-        raise ValueError(f"Unknown method: {method}")
     
 
 def select_answer(gold_answers, max_words=250):
@@ -95,6 +83,18 @@ def augment_with_documents(dataset, retrieved_results, max_words):
             "gold_answer": target_text
         })
     return augmented_data
+
+
+def retrieval_results(queries, method='BM25', k=50, retriever=None, batch_size=256):
+    """
+    Restituisce {query: [doc1, doc2, ..., dock]}.
+    """
+    if method == 'BM25':
+        return bm25_batch_retrieve(queries, searcher=retriever, k=k, batch_size=batch_size)
+    elif method == 'Contriever':
+        return retriever.contriever_batch_retrieve(queries=queries, k=k, batch_size=batch_size)
+    else:
+        raise ValueError(f"Unknown method: {method}")
 
 
 def create_retriever(method='BM25', bm25_index_dir=None, faiss_index=None,
