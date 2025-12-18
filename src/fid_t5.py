@@ -12,7 +12,10 @@ python fid_t5.py train --augmented_datasets ../data/train_augmented.json \
     --model_name t5-small \
     --num_epochs 10 \
     --per_device_batch_size 1 \
-    --effective_batch_size 64
+    --effective_batch_size 64 \
+    --save_every_epoch \
+    --amp \
+    --resume_from ./models/fid_t5/epoch_3/training_state.pt
 
 Inferenza
 python fid_t5.py generate --model_dir ./models/fid_t5 \
@@ -35,7 +38,11 @@ from torch.utils.data import Dataset, DataLoader
 from torch.optim import AdamW
 from tqdm.auto import tqdm
 
-from transformers import (T5Tokenizer, T5ForConditionalGeneration, get_constant_schedule_with_warmup)
+from transformers import (
+    T5Tokenizer,
+    T5ForConditionalGeneration,
+    get_constant_schedule_with_warmup,
+)
 from transformers.modeling_outputs import BaseModelOutput
 
 
@@ -46,6 +53,74 @@ def set_seed(seed: int = 42):
     random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+
+
+def _optimizer_to_device(optimizer: torch.optim.Optimizer, device: torch.device) -> None:
+    """
+    Dopo optimizer.load_state_dict(...), gli state tensors possono rimanere su CPU.
+    Questa utility li sposta sul device corretto.
+    """
+    for state in optimizer.state.values():
+        for k, v in state.items():
+            if torch.is_tensor(v):
+                state[k] = v.to(device)
+
+
+def save_training_state(
+    path: str,
+    model: T5ForConditionalGeneration,
+    optimizer: torch.optim.Optimizer,
+    scheduler: torch.optim.lr_scheduler._LRScheduler,
+    scaler: torch.cuda.amp.GradScaler,
+    epoch: int,
+    global_step: int,
+    args: argparse.Namespace,
+) -> None:
+    state = {
+        "epoch": int(epoch),
+        "global_step": int(global_step),
+        "model": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "scheduler": scheduler.state_dict(),
+        "scaler": scaler.state_dict() if scaler is not None else None,
+        "args": vars(args),
+        "py_rng": random.getstate(),
+        "torch_rng": torch.get_rng_state(),
+        "cuda_rng": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+    }
+    torch.save(state, path)
+
+
+def load_training_state(
+    path: str,
+    model: T5ForConditionalGeneration,
+    optimizer: torch.optim.Optimizer,
+    scheduler: torch.optim.lr_scheduler._LRScheduler,
+    scaler: torch.cuda.amp.GradScaler,
+    device: torch.device,
+) -> tuple[int, int]:
+    ckpt = torch.load(path, map_location=device)
+
+    model.load_state_dict(ckpt["model"])
+    optimizer.load_state_dict(ckpt["optimizer"])
+    _optimizer_to_device(optimizer, device)
+
+    scheduler.load_state_dict(ckpt["scheduler"])
+
+    if scaler is not None and ckpt.get("scaler") is not None:
+        scaler.load_state_dict(ckpt["scaler"])
+
+    # RNG
+    if "py_rng" in ckpt:
+        random.setstate(ckpt["py_rng"])
+    if "torch_rng" in ckpt:
+        torch.set_rng_state(ckpt["torch_rng"])
+    if torch.cuda.is_available() and ckpt.get("cuda_rng") is not None:
+        torch.cuda.set_rng_state_all(ckpt["cuda_rng"])
+
+    last_epoch = int(ckpt.get("epoch", 0))
+    global_step = int(ckpt.get("global_step", 0))
+    return last_epoch, global_step
 
 
 # =========================
@@ -60,11 +135,12 @@ class QA_Dataset_FiD(Dataset):
         "retrieved_docs": List[str]
       }
     """
+
     def __init__(
         self,
         augmented_data: List[Dict[str, Any]],
         require_answer: bool = True,
-        strip_empty_docs: bool = True
+        strip_empty_docs: bool = True,
     ):
         self.samples = []
         dropped = 0
@@ -88,11 +164,13 @@ class QA_Dataset_FiD(Dataset):
                 dropped += 1
                 continue
 
-            self.samples.append({
-                "query": query,
-                "docs": docs,
-                "answer": (answer.strip() if isinstance(answer, str) else None)
-            })
+            self.samples.append(
+                {
+                    "query": query,
+                    "docs": docs,
+                    "answer": (answer.strip() if isinstance(answer, str) else None),
+                }
+            )
 
         if dropped > 0:
             print(f"[QA_Dataset_FiD] Scartati {dropped} esempi malformati o senza risposta.")
@@ -110,7 +188,7 @@ class QA_Dataset_FiD(Dataset):
         tokenizer: T5Tokenizer,
         max_docs_per_item: int = 50,
         max_input_len: int = 256,
-        max_target_len: int = 64
+        max_target_len: int = 64,
     ) -> Dict[str, torch.Tensor]:
         """
         Restituisce tensori FiD con shape:
@@ -151,8 +229,8 @@ class QA_Dataset_FiD(Dataset):
                     max_length=max_input_len,
                     return_tensors="pt",
                 )
-                in_ids = enc.input_ids            # (n_i, L)
-                attn = enc.attention_mask         # (n_i, L)
+                in_ids = enc.input_ids  # (n_i, L)
+                attn = enc.attention_mask  # (n_i, L)
             else:
                 in_ids = torch.empty(0, max_input_len, dtype=torch.long)
                 attn = torch.empty(0, max_input_len, dtype=torch.long)
@@ -168,8 +246,8 @@ class QA_Dataset_FiD(Dataset):
                     in_ids = torch.cat([in_ids, pad_ids_block], dim=0)
                     attn = torch.cat([attn, pad_attn_block], dim=0)
 
-            all_input_ids.append(in_ids)         # (max_docs_per_item, L)
-            all_attention_masks.append(attn)     # (max_docs_per_item, L)
+            all_input_ids.append(in_ids)  # (max_docs_per_item, L)
+            all_attention_masks.append(attn)  # (max_docs_per_item, L)
 
             if isinstance(answer, str) and answer.strip() != "":
                 lab = tokenizer(
@@ -178,16 +256,16 @@ class QA_Dataset_FiD(Dataset):
                     padding="max_length",
                     max_length=max_target_len,
                     return_tensors="pt",
-                ).input_ids.squeeze(0)           # (T)
+                ).input_ids.squeeze(0)  # (T)
                 lab[lab == pad_id] = label_pad_id
             else:
                 lab = torch.full((max_target_len,), label_pad_id, dtype=torch.long)
 
             all_labels.append(lab)
 
-        batch_input_ids = torch.stack(all_input_ids, dim=0)          # (B, max_docs_per_item, L)
+        batch_input_ids = torch.stack(all_input_ids, dim=0)  # (B, max_docs_per_item, L)
         batch_attention_masks = torch.stack(all_attention_masks, 0)  # (B, max_docs_per_item, L)
-        batch_labels = torch.stack(all_labels, dim=0)                # (B, T)
+        batch_labels = torch.stack(all_labels, dim=0)  # (B, T)
 
         return {
             "input_ids": batch_input_ids,
@@ -201,7 +279,7 @@ class QA_Dataset_FiD(Dataset):
 # =========================
 def fid_encode_concat(
     model: T5ForConditionalGeneration,
-    input_ids_batch: torch.Tensor,       # (B, N, L)
+    input_ids_batch: torch.Tensor,  # (B, N, L)
     attention_mask_batch: torch.Tensor,  # (B, N, L)
 ) -> tuple[BaseModelOutput, torch.Tensor]:
     """
@@ -219,7 +297,7 @@ def fid_encode_concat(
     encoder_out = model.encoder(
         input_ids=input_ids_enc,
         attention_mask=attention_mask_enc,
-        return_dict=True
+        return_dict=True,
     )
     last_hidden = encoder_out.last_hidden_state  # (B*N, L, d)
 
@@ -278,8 +356,10 @@ def train(args):
     optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     if args.gradient_accumulation_steps is None:
         if args.effective_batch_size % args.per_device_batch_size != 0:
-            raise ValueError("effective_batch_size deve essere divisibile per per_device_batch_size "
-                             "oppure specifica --gradient_accumulation_steps.")
+            raise ValueError(
+                "effective_batch_size deve essere divisibile per per_device_batch_size "
+                "oppure specifica --gradient_accumulation_steps."
+            )
         grad_accum = args.effective_batch_size // args.per_device_batch_size
     else:
         grad_accum = args.gradient_accumulation_steps
@@ -309,23 +389,42 @@ def train(args):
 
     scaler = torch.cuda.amp.GradScaler(enabled=(args.amp and device.type == "cuda"))
 
+    start_epoch = 1
     global_step = 0
     os.makedirs(args.model_dir, exist_ok=True)
 
-    for epoch in range(1, args.num_epochs + 1):
+    # Resume (da inizio epoca successiva a quella salvata)
+    if args.resume_from:
+        last_epoch, global_step = load_training_state(
+            args.resume_from, model, optimizer, scheduler, scaler, device
+        )
+        start_epoch = last_epoch + 1
+        print(f"[resume] Loaded training_state from: {args.resume_from}")
+        print(f"[resume] last_epoch={last_epoch} -> start_epoch={start_epoch} | global_step={global_step}")
+
+    for epoch in range(start_epoch, args.num_epochs + 1):
         model.train()
         epoch_loss_sum, epoch_count = 0.0, 0
         optimizer.zero_grad(set_to_none=True)
 
-        pbar = tqdm(enumerate(train_loader, start=1), total=len(train_loader), desc=f"Epoch {epoch}/{args.num_epochs}")
+        pbar = tqdm(
+            enumerate(train_loader, start=1), 
+            total=len(train_loader), 
+            desc=f"Epoch {epoch}/{args.num_epochs}",
+            )
+        
         for step_idx, batch in pbar:
-            input_ids = batch["input_ids"].to(device)       # (B, N, L)
+            input_ids = batch["input_ids"].to(device)  # (B, N, L)
             attention_mask = batch["attention_mask"].to(device)
-            labels = batch["labels"].to(device)             # (B, T)
+            labels = batch["labels"].to(device)  # (B, T)
 
-            encoder_outputs, enc_attn_mask = fid_encode_concat(model, input_ids, attention_mask)
-
-            with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=(args.amp and device.type == "cuda")):
+            # Encoder sotto autocast quando AMP è attivo
+            with torch.autocast(
+                device_type="cuda",
+                dtype=torch.float16,
+                enabled=(args.amp and device.type == "cuda"),
+            ):
+                encoder_outputs, enc_attn_mask = fid_encode_concat(model, input_ids, attention_mask)
                 outputs = model(
                     labels=labels,
                     encoder_outputs=encoder_outputs,
@@ -364,8 +463,8 @@ def train(args):
                 global_step += 1
 
                 pbar.set_postfix(
-                    loss=f"{(epoch_loss_sum / max(epoch_count,1)):.4f}",
-                    lr=f"{scheduler.get_last_lr()[0]:.2e}"
+                    loss=f"{(epoch_loss_sum / max(epoch_count, 1)):.4f}",
+                    lr=f"{scheduler.get_last_lr()[0]:.2e}",
                 )
 
         # Flush di eventuali gradienti residui se l'epoch non è multiplo di grad_accum
@@ -374,11 +473,13 @@ def train(args):
                 if args.amp and device.type == "cuda":
                     scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+
             if args.amp and device.type == "cuda":
                 scaler.step(optimizer)
                 scaler.update()
             else:
                 optimizer.step()
+
             scheduler.step()
             optimizer.zero_grad(set_to_none=True)
             global_step += 1
@@ -386,13 +487,26 @@ def train(args):
         avg_train_loss = epoch_loss_sum / max(epoch_count, 1)
         print(f"Epoch {epoch} done. Train loss: {avg_train_loss:.4f}")
 
-        # Checkpoint per-epoca (opzionale)
+        # Checkpoint per-epoca (opzionale) + training_state per resume da inizio epoca
         if args.save_every_epoch:
             save_dir = os.path.join(args.model_dir, f"epoch_{epoch}")
             os.makedirs(save_dir, exist_ok=True)
             model.save_pretrained(save_dir)
             tokenizer.save_pretrained(save_dir)
+
+            state_path = os.path.join(save_dir, "training_state.pt")
+            save_training_state(
+                state_path,
+                model=model,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                scaler=scaler,
+                epoch=epoch,
+                global_step=global_step,
+                args=args,
+            )
             print(f"Saved epoch checkpoint to: {save_dir}")
+            print(f"Saved training state to: {state_path}")
         elif epoch == args.num_epochs:
             # Salva il modello finale
             model.save_pretrained(args.model_dir)
@@ -418,7 +532,7 @@ def t5_fid_generator(
     max_input_len: int = 256,
     max_output_len: int = 64,
     num_beams: int = 4,
-    **generate_kwargs
+    **generate_kwargs,
 ) -> Dict[str, str]:
     """
     FiD generation su un dizionario {query: [doc1, doc2, ...]}.
@@ -443,7 +557,7 @@ def t5_fid_generator(
             max_length=max_input_len,
             return_tensors="pt",
         )
-        input_ids = enc.input_ids.to(device)          # (N, L_i)
+        input_ids = enc.input_ids.to(device)  # (N, L_i)
         attention_mask = enc.attention_mask.to(device)
 
         with torch.inference_mode():
@@ -451,9 +565,9 @@ def t5_fid_generator(
             enc_out = model.encoder(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
-                return_dict=True
+                return_dict=True,
             )
-            last_hidden = enc_out.last_hidden_state   # (N, L, d)
+            last_hidden = enc_out.last_hidden_state  # (N, L, d)
             N, L, d = last_hidden.shape
 
             # Concat FiD: (1, N*L, d)
@@ -469,7 +583,7 @@ def t5_fid_generator(
                 num_beams=num_beams,
                 max_new_tokens=max_output_len,
                 early_stopping=True,
-                **generate_kwargs
+                **generate_kwargs,
             )
 
         out_text = tokenizer.decode(gen_ids[0], skip_special_tokens=True).strip()
@@ -508,8 +622,10 @@ def load_queries_docs_from_json(path: str) -> Dict[str, List[str]]:
 # CLI
 # =========================
 def main():
-    parser = argparse.ArgumentParser(description="Unified T5 FiD Training and Inference",
-                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description="Unified T5 FiD Training and Inference",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # Train
@@ -532,6 +648,8 @@ def main():
     p_train.add_argument("--amp", action="store_true", help="Enable mixed precision (fp16)")
     p_train.add_argument("--grad_checkpointing", action="store_true")
     p_train.add_argument("--save_every_epoch", action="store_true")
+    p_train.add_argument("--resume_from", type=str,default=None,
+        help="Path a training_state.pt per riprendere training (resume da inizio epoca).")
     p_train.add_argument("--seed", type=int, default=42)
 
     # Generate
