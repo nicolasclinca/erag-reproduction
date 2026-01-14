@@ -249,21 +249,7 @@ class DPRShardedSearcher:
         self.cache.put(shard_dir, data)
         return data
 
-    def search_docids_batch(
-        self,
-        queries: List[str],
-        k: int = 50,
-        encode_batch_size: int = 32,
-        max_query_len: int = 256,
-        faiss_threads: Optional[int] = None,
-    ) -> List[List[Tuple[str, float]]]:
-        """
-        Ritorna, per ogni query, una lista di (docid, score) top-k globali.
 
-        NOTE:
-        - Faiss ritorna score coerenti col metric dell'indice.
-        - Merge tra shard: prendo top-k da ogni shard e poi faccio top-k globale.
-        """
     def search_docids_batch(
         self,
         queries: List[str],
