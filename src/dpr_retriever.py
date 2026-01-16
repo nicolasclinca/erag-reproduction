@@ -16,7 +16,7 @@ Questo retriever:
 - cerca in tutti gli shard FAISS e fa il merge per ottenere il top-k globale
 - converte docid -> "contents" usando un docstore Lucene (es. un indice BM25 con storeRaw)
 
-Dettagli implementativi (Opzione A + preload indici):
+Dettagli implementativi:
 - gli indici FAISS vengono PRELOADATI (aperti) una sola volta all'avvio (con mmap opzionale)
 - durante lo scan shard-by-shard NON converte rid -> docid
 - accumula solo (score, shard_idx, rid) e converte in docid solo dopo il merge top-k
@@ -40,8 +40,8 @@ python dpr_retriever.py \
   --k 5 --threads 8 --max_loaded_docid_shards 16
 
 Note:
-- se l'indice BM25 è disponibile e contiene storeRaw, può essere usato come docstore_index_dir
-  (es. --docstore_index_dir ../indexes/bm25_index).
+- se l'indice BM25 è disponibile e contiene storeRaw, può essere usato come docstore_index_dir:
+  es. --docstore_index_dir ../indexes/bm25_index.
 """
 
 from __future__ import annotations
