@@ -12,13 +12,18 @@ indexes/wiki-dpr-118m/
   ...
 
 Questo retriever:
-- embedd-a le query con il DPR question encoder
-- cerca in tutti gli shard e merge-a i risultati per ottenere il top-k globale
-- converte docid -> "contents" usando un docstore Lucene (es. l'indice BM25 con storeRaw)
+- embedd-a le query con il DPR question encoder (HuggingFace)
+- cerca in tutti gli shard FAISS e fa il merge per ottenere il top-k globale
+- converte docid -> "contents" usando un docstore Lucene (es. un indice BM25 con storeRaw)
 
-Uso CLI:
+Dettagli implementativi (Opzione A + preload indici):
+- gli indici FAISS vengono PRELOADATI (aperti) una sola volta all'avvio (con mmap opzionale)
+- durante lo scan shard-by-shard NON converte rid -> docid
+- accumula solo (score, shard_idx, rid) e converte in docid solo dopo il merge top-k
+- carica in RAM il file docid solo per gli shard che compaiono nel top-k (cache LRU dedicata)
 
-Il docstore deve essere già costruito con PySerini:
+Uso CLI (docstore richiesto):
+Il docstore deve essere già costruito con PySerini (serve storeRaw):
 python -m pyserini.index.lucene \
   -collection JsonCollection \
   -input data/collection \
@@ -28,13 +33,15 @@ python -m pyserini.index.lucene \
   -storeRaw
 
 Singola query:
-python dpr_retriever.py --dpr_index_root_dir ../indexes/wiki-dpr-118m \
-    --docstore_index_dir indexes/wiki_docstore_lucene \
-    --query "When did Apollo 11 land?" \
-    --k 5 --threads 8 --max_loaded_shards 8 --mmap
+python dpr_retriever.py \
+  --dpr_index_root_dir ../indexes/wiki-dpr-118m \
+  --docstore_index_dir ../indexes/wiki_docstore_lucene \
+  --query "When did Apollo 11 land?" \
+  --k 5 --threads 8 --max_loaded_docid_shards 16
 
-Note: se l'indice bm25 è disponibile, può essere usato come docstore_index_dir
-(es. --docstore_index_dir ../indexes/bm25_index).
+Note:
+- se l'indice BM25 è disponibile e contiene storeRaw, può essere usato come docstore_index_dir
+  (es. --docstore_index_dir ../indexes/bm25_index).
 """
 
 from __future__ import annotations
@@ -44,9 +51,8 @@ import re
 import json
 import heapq
 import argparse
-from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 
 import numpy as np
 import torch
@@ -54,9 +60,7 @@ import torch
 try:
     import faiss  # type: ignore
 except Exception as e:
-    raise RuntimeError(
-        "faiss non disponibile. Installa faiss-cpu o faiss-gpu."
-    ) from e
+    raise RuntimeError("faiss non disponibile. Installa faiss-cpu o faiss-gpu.") from e
 
 from transformers import AutoTokenizer, DPRQuestionEncoder
 from pyserini.search.lucene import LuceneSearcher
@@ -72,7 +76,7 @@ def _list_part_dirs(root: str) -> List[str]:
     if not os.path.isdir(root):
         raise ValueError(f"Index root dir not found: {root}")
 
-    parts = []
+    parts: List[Tuple[int, str]] = []
     for name in os.listdir(root):
         m = _PART_RE.match(name)
         if m:
@@ -92,7 +96,7 @@ class DPRQueryEncoderHF:
     """
 
     def __init__(self, model_name: str, device: Optional[torch.device] = None):
-        self.device = device or (torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"))
+        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
         self.model = DPRQuestionEncoder.from_pretrained(model_name).to(self.device)
         self.model.eval()
@@ -116,7 +120,7 @@ class DPRQueryEncoderHF:
         if not queries:
             return np.empty((0, self.D), dtype=np.float32)
 
-        vecs = []
+        vecs: List[np.ndarray] = []
         for i in range(0, len(queries), batch_size):
             batch = queries[i : i + batch_size]
             enc = self.tokenizer(
@@ -128,7 +132,6 @@ class DPRQueryEncoderHF:
             )
             enc = {k: v.to(self.device) for k, v in enc.items()}
             out = self.model(**enc)
-            # DPR usa pooler_output come embedding query
             x = out.pooler_output  # (B, D)
             vecs.append(x.detach().float().cpu().numpy().astype(np.float32, copy=False))
 
@@ -136,40 +139,24 @@ class DPRQueryEncoderHF:
 
 
 # ============================
-# FAISS shard cache (LRU)
+# LRU cache helpers (for docid shards)
 # ============================
-@dataclass
-class _ShardData:
-    index: "faiss.Index"
-    docids: List[str]
-
-
-class _LRUShardCache:
-    """
-    Cache LRU per shard. Utile perché:
-    - non puoi caricare 120 shard contemporaneamente (anche con PQ restano pesanti)
-    - però vuoi evitare di ricaricare continuamente lo stesso shard in alcuni workflow
-
-    Nota: se usi IO_FLAG_MMAP, l'indice è mmappato e l'overhead RAM è minore, ma
-    tenere 120 mmap aperti può comunque essere indesiderabile.
-    """
-
+class _LRUCache:
     def __init__(self, max_loaded: int = 1):
         self.max_loaded = max(1, int(max_loaded))
-        self._cache: "OrderedDict[str, _ShardData]" = OrderedDict()
+        self._cache: "OrderedDict[str, object]" = OrderedDict()
 
-    def get(self, shard_dir: str) -> Optional[_ShardData]:
-        v = self._cache.get(shard_dir)
+    def get(self, key: str):
+        v = self._cache.get(key)
         if v is not None:
-            self._cache.move_to_end(shard_dir)
+            self._cache.move_to_end(key)
         return v
 
-    def put(self, shard_dir: str, data: _ShardData) -> None:
-        self._cache[shard_dir] = data
-        self._cache.move_to_end(shard_dir)
+    def put(self, key: str, value) -> None:
+        self._cache[key] = value
+        self._cache.move_to_end(key)
         while len(self._cache) > self.max_loaded:
             _, ev = self._cache.popitem(last=False)
-            # release references
             del ev
 
     def clear(self) -> None:
@@ -185,6 +172,7 @@ class DPRShardedSearcher:
 
     - index_root_dir: directory contenente part_0..part_N
     - docstore: LuceneSearcher usato per docid -> raw json -> contents
+    - preload indici: self.indexes è allineato a self.part_dirs (shard_idx)
     """
 
     def __init__(
@@ -193,7 +181,7 @@ class DPRShardedSearcher:
         docstore: LuceneSearcher,
         query_encoder_name: str = "facebook/dpr-question_encoder-multiset-base",
         device: Optional[torch.device] = None,
-        max_loaded_shards: int = 1,
+        max_loaded_docid_shards: int = 16,
         faiss_threads: Optional[int] = None,
         mmap: bool = True,
     ):
@@ -208,8 +196,10 @@ class DPRShardedSearcher:
         self.docstore = docstore
         self.encoder = DPRQueryEncoderHF(query_encoder_name, device=device)
 
-        self.cache = _LRUShardCache(max_loaded=max_loaded_shards)
         self.mmap = bool(mmap)
+
+        # Cache docid: carica docid solo per shard presenti nel top-k
+        self.docid_cache = _LRUCache(max_loaded=max_loaded_docid_shards)
 
         if faiss_threads is not None:
             try:
@@ -217,15 +207,17 @@ class DPRShardedSearcher:
             except Exception:
                 pass
 
-    def _load_shard(self, shard_dir: str) -> _ShardData:
+        # PRELOAD: apre tutti gli indici FAISS una sola volta
+        self.indexes: List["faiss.Index"] = []
+        for shard_dir in self.part_dirs:
+            self.indexes.append(self._load_index(shard_dir))
+
+    # ---------- Index loading ----------
+    def _load_index(self, shard_dir: str) -> "faiss.Index":
         index_path = os.path.join(shard_dir, "index")
-        docid_path = os.path.join(shard_dir, "docid")
         if not os.path.exists(index_path):
             raise FileNotFoundError(f"Missing FAISS index file: {index_path}")
-        if not os.path.exists(docid_path):
-            raise FileNotFoundError(f"Missing docid file: {docid_path}")
 
-        # Load FAISS index (try mmap if available)
         idx = None
         if self.mmap and hasattr(faiss, "IO_FLAG_MMAP"):
             try:
@@ -235,21 +227,28 @@ class DPRShardedSearcher:
         if idx is None:
             idx = faiss.read_index(index_path)
 
-        # Load docids list
+        return idx
+
+    # ---------- DocID loading ----------
+    def _load_docids(self, shard_dir: str) -> List[str]:
+        docid_path = os.path.join(shard_dir, "docid")
+        if not os.path.exists(docid_path):
+            raise FileNotFoundError(f"Missing docid file: {docid_path}")
         with open(docid_path, "r", encoding="utf-8") as f:
-            docids = [line.strip() for line in f if line.strip()]
+            docids = [line.rstrip("\n") for line in f]
+        if docids and docids[-1] == "":
+            docids = docids[:-1]
+        return docids
 
-        return _ShardData(index=idx, docids=docids)
-
-    def _get_shard(self, shard_dir: str) -> _ShardData:
-        cached = self.cache.get(shard_dir)
+    def _get_docids(self, shard_dir: str) -> List[str]:
+        cached = self.docid_cache.get(shard_dir)
         if cached is not None:
-            return cached
-        data = self._load_shard(shard_dir)
-        self.cache.put(shard_dir, data)
-        return data
+            return cached  # type: ignore[return-value]
+        docids = self._load_docids(shard_dir)
+        self.docid_cache.put(shard_dir, docids)
+        return docids
 
-
+    # ---------- Retrieval core ----------
     def search_docids_batch(
         self,
         queries: List[str],
@@ -261,11 +260,14 @@ class DPRShardedSearcher:
         """
         Ritorna, per ogni query, una lista di (docid, score) top-k globali.
 
-        Per fare un merge corretto tra shard usando heapq.nlargest, convertiamo tutte le
-        metriche di distanza in uno score "higher-is-better" usando score = -distance.
+        - Mantiene per ogni query un min-heap (dimensione k) di tuple (score, shard_idx, rid)
+        - score viene normalizzato in "higher is better" (se metrica distanza: score=-distance)
+        - dopo il merge risolve rid->docid solo per gli shard effettivamente usati
         """
         if not queries:
             return []
+        if k <= 0:
+            return [[] for _ in queries]
 
         if faiss_threads is not None:
             try:
@@ -277,20 +279,16 @@ class DPRShardedSearcher:
         if Q.ndim != 2:
             raise RuntimeError("Query embeddings shape non valida.")
         qn, qd = Q.shape
-
-        # candidates[i] = lista di (merge_score, docid) per la query i
-        candidates: List[List[Tuple[float, str]]] = [[] for _ in range(qn)]
-
         Qc = np.ascontiguousarray(Q, dtype=np.float32)
 
-        for shard_dir in self.part_dirs:
-            shard = self._get_shard(shard_dir)
-            index = shard.index
-            docids = shard.docids
+        # heaps[i] è un min-heap di (score, shard_idx, rid) per la query i
+        heaps: List[List[Tuple[float, int, int]]] = [[] for _ in range(qn)]
 
-            # Sanity check dimension
+        for shard_idx, shard_dir in enumerate(self.part_dirs):
+            shard_index = self.indexes[shard_idx]
+
             try:
-                d_index = int(index.d)
+                d_index = int(shard_index.d)
                 if d_index != qd:
                     raise RuntimeError(
                         f"Dim mismatch: query_dim={qd} vs index_dim={d_index} in {shard_dir}"
@@ -298,32 +296,62 @@ class DPRShardedSearcher:
             except Exception:
                 pass
 
-            scores, ids = index.search(Qc, int(k))  # shapes: (qn, k)
+            scores, ids = shard_index.search(Qc, int(k))  # shapes: (qn, k)
 
-            # Determina se lo score è una distanza (lower is better) o similarità (higher is better)
-            # In FAISS: solo METRIC_INNER_PRODUCT è "higher-is-better", le altre sono distanze.
-            metric_type = int(getattr(index, "metric_type", faiss.METRIC_INNER_PRODUCT))
+            # Normalizzo score per merge: higher is better
+            metric_type = getattr(shard_index, "metric_type", faiss.METRIC_INNER_PRODUCT)
+            try:
+                metric_type = int(metric_type)
+            except Exception:
+                metric_type = faiss.METRIC_INNER_PRODUCT
             is_distance_metric = (metric_type != faiss.METRIC_INNER_PRODUCT)
 
             for i in range(qn):
+                h = heaps[i]
                 for j in range(k):
                     rid = int(ids[i, j])
                     if rid < 0:
                         continue
-                    if rid >= len(docids):
-                        continue
 
                     s = float(scores[i, j])
                     if is_distance_metric:
-                        s = -s  # converto distanza in score "higher-is-better" per merge corretto
+                        s = -s
 
-                    candidates[i].append((s, docids[rid]))
+                    item = (s, shard_idx, rid)
+                    if len(h) < k:
+                        heapq.heappush(h, item)
+                    else:
+                        # se migliore del peggiore nel heap, sostituisci
+                        if s > h[0][0]:
+                            heapq.heapreplace(h, item)
 
-        # merge top-k per query (ora sempre higher-is-better)
+        # Ordina i top-k per query in ordine decrescente e identifica shard necessari
+        top_per_query: List[List[Tuple[float, int, int]]] = []
+        needed_shards: Dict[int, List[int]] = defaultdict(list)
+
+        for i in range(qn):
+            items_sorted = sorted(heaps[i], key=lambda x: x[0], reverse=True)
+            top_per_query.append(items_sorted)
+            for _s, sh, rid in items_sorted:
+                needed_shards[sh].append(rid)
+
+        # Carica docids solo per shard effettivamente usati
+        docids_by_shard: Dict[int, List[str]] = {}
+        for sh in needed_shards.keys():
+            shard_dir = self.part_dirs[sh]
+            docids_by_shard[sh] = self._get_docids(shard_dir)
+
+        # Ricostruisce output: (docid, score)
         out: List[List[Tuple[str, float]]] = []
         for i in range(qn):
-            top = heapq.nlargest(k, candidates[i], key=lambda x: x[0])
-            out.append([(docid, score) for score, docid in top])
+            res_i: List[Tuple[str, float]] = []
+            for s, sh, rid in top_per_query[i]:
+                docids = docids_by_shard.get(sh, [])
+                if 0 <= rid < len(docids):
+                    res_i.append((docids[rid], s))
+                else:
+                    res_i.append(("", s))
+            out.append(res_i)
 
         return out
 
@@ -333,14 +361,16 @@ class DPRShardedSearcher:
         """
         out: List[str] = []
         for did in docids:
+            if not did:
+                out.append("")
+                continue
             try:
                 doc = self.docstore.doc(did)
                 if doc is None:
                     out.append("")
                     continue
-                raw = doc.raw()
-                js = json.loads(raw)
-                out.append(js.get("contents", ""))
+                js = json.loads(doc.raw())
+                out.append(js.get("contents") or js.get("text") or "")
             except Exception:
                 out.append("")
         return out
@@ -353,33 +383,22 @@ def create_dpr_searcher(
     dpr_index_root_dir: str,
     docstore_index_dir: str,
     query_encoder_name: str = "facebook/dpr-question_encoder-multiset-base",
-    device: Optional[str] = None,
-    max_loaded_shards: int = 1,
+    max_loaded_docid_shards: int = 16,
     faiss_threads: Optional[int] = None,
     mmap: bool = True,
 ) -> DPRShardedSearcher:
     """
-    Factory simile a create_bm25_searcher().
     docstore_index_dir: indice Lucene con storeRaw.
     """
     lucene = LuceneSearcher(docstore_index_dir)
-
-    dev = None
-    if device is not None:
-        device = device.lower().strip()
-        if device == "cpu":
-            dev = torch.device("cpu")
-        elif device == "cuda":
-            dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        else:
-            dev = torch.device(device)
+    dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     return DPRShardedSearcher(
         index_root_dir=dpr_index_root_dir,
         docstore=lucene,
         query_encoder_name=query_encoder_name,
         device=dev,
-        max_loaded_shards=max_loaded_shards,
+        max_loaded_docid_shards=max_loaded_docid_shards,
         faiss_threads=faiss_threads,
         mmap=mmap,
     )
@@ -433,9 +452,9 @@ def dpr_batch_retrieve(
 
         # 1) estrai docids top-k per query
         per_query_docids: List[List[str]] = []
-        all_docids = []
+        all_docids: List[str] = []
         for scored in scored_lists:
-            docids = [d for d, _s in scored]
+            docids = [d for d, _s in scored if d]
             per_query_docids.append(docids)
             all_docids.extend(docids)
 
@@ -454,23 +473,26 @@ def dpr_batch_retrieve(
 # CLI
 # ============================
 def main():
-    parser = argparse.ArgumentParser(
-        description="DPR retrieval (FAISS sharded) + Lucene docstore for contents.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
+    parser = argparse.ArgumentParser(description="DPR retrieval (FAISS sharded) + Lucene docstore for contents.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--dpr_index_root_dir", required=True, help="Dir con part_0..part_N (FAISS)")
-    parser.add_argument("--docstore_index_dir", required=True, help="Indice Lucene con storeRaw per docid->contents (es. bm25_index)")
+    parser.add_argument("--docstore_index_dir", required=True,
+        help="Indice Lucene con storeRaw per docid->contents (es. bm25_index)")
     parser.add_argument("--query", required=True, help="Singola query")
     parser.add_argument("--k", type=int, default=50)
-    parser.add_argument("--threads", type=int, default=8, help="FAISS omp threads")
-    parser.add_argument("--max_loaded_shards", type=int, default=8, help="Shard cache size (LRU)")
-    parser.add_argument("--mmap", action="store_true", help="Prova a usare faiss IO_FLAG_MMAP")
+    parser.add_argument("--threads", type=int, default=8, help="FAISS omp threads (CPU)")
+    parser.add_argument("--max_loaded_docid_shards", type=int, default=16,
+        help="Docid cache size (LRU). Opzione A: shard docid caricati on-demand.")
+    parser.add_argument("--mmap", dest="mmap", action="store_true", help="Usa FAISS IO_FLAG_MMAP (default)")
+    parser.add_argument("--no_mmap", dest="mmap", action="store_false", help="Disabilita mmap")
+    parser.set_defaults(mmap=True)
+
     args = parser.parse_args()
 
     searcher = create_dpr_searcher(
         dpr_index_root_dir=args.dpr_index_root_dir,
         docstore_index_dir=args.docstore_index_dir,
-        max_loaded_shards=args.max_loaded_shards,
+        max_loaded_docid_shards=args.max_loaded_docid_shards,
         faiss_threads=args.threads,
         mmap=args.mmap,
     )
