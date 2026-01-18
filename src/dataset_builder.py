@@ -34,8 +34,7 @@ python dataset_builder.py --datasets ../data/nq-train-kilt.jsonl \
     --k 50 \
     --batch_size 256 \
     --dpr_threads 8 \
-    --dpr_encode_batch_size 32 \
-    --dpr_max_query_len 256
+    --dpr_encode_batch_size 32
 """
 
 import json
@@ -44,7 +43,7 @@ import os
 
 from contriever_retriever import DenseRetriever
 from bm25_retriever import bm25_batch_retrieve, create_bm25_searcher
-from dpr_retriever import dpr_batch_retrieve, create_dpr_searcher
+from dpr_retriever import DPRShardedSearcher, dpr_batch_retrieve
 
 
 def load_expected_outputs(filename):
@@ -138,9 +137,7 @@ def create_retriever(
     # DPR args
     dpr_index_root_dir=None,
     docstore_index_dir=None,
-    dpr_query_encoder_name="facebook/dpr-question_encoder-multiset-base",
     max_loaded_docid_shards=16,
-    dpr_faiss_threads=8,
     dpr_mmap=True,
 ):
     if method == "BM25":
@@ -178,12 +175,10 @@ def create_retriever(
                 f"(mancanti: {', '.join(missing)})"
             )
 
-        retriever = create_dpr_searcher(
-            dpr_index_root_dir=dpr_index_root_dir,
+        retriever = DPRShardedSearcher(
+            index_root_dir=dpr_index_root_dir,
             docstore_index_dir=docstore_index_dir,
-            query_encoder_name=dpr_query_encoder_name,
             max_loaded_docid_shards=max_loaded_docid_shards,
-            faiss_threads=dpr_faiss_threads,
             mmap=dpr_mmap,
         )
 
@@ -216,7 +211,6 @@ def augment_datasets(args):
         # DPR
         dpr_index_root_dir=args.dpr_index_root_dir,
         docstore_index_dir=args.docstore_index_dir,
-        dpr_query_encoder_name=args.dpr_query_encoder_name,
         max_loaded_docid_shards=args.max_loaded_docid_shards,
         dpr_mmap=args.dpr_mmap,
     )
@@ -255,38 +249,15 @@ if __name__ == "__main__":
         description="Augment datasets with retrieved documents",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument(
-        "--datasets",
-        type=str,
-        nargs="+",
-        required=True,
-        help="List of paths to the datasets to process (separated by space).",
-    )
-    parser.add_argument(
-        "--augmented_datasets",
-        type=str,
-        default=None,
-        help="Directory dove salvare i dataset augmentati. Default: stessa cartella del dataset.",
-    )
-    parser.add_argument(
-        "--method",
-        type=str,
-        choices=["BM25", "Contriever", "DPR"],
-        default="BM25",
-        help="Retrieval method (BM25, Contriever, DPR)",
-    )
-    parser.add_argument(
-        "--k",
-        type=int,
-        default=50,
-        help="Number of documents to retrieve for each query (default: 50)",
-    )
-    parser.add_argument(
-        "--batch_size",
-        type=int,
-        default=256,
-        help="Batch size for retrieval (default: 256)",
-    )
+    parser.add_argument("--datasets", type=str, nargs="+", required=True,
+        help="List of paths to the datasets to process (separated by space).")
+    parser.add_argument("--augmented_datasets", type=str, default=None,
+        help="Directory dove salvare i dataset augmentati. Default: stessa cartella del dataset.")
+    parser.add_argument("--method", type=str, choices=["BM25", "Contriever", "DPR"], default="BM25",
+        help="Retrieval method (BM25, Contriever, DPR)")
+    parser.add_argument("--k", type=int, default=50,
+        help="Number of documents to retrieve for each query (default: 50)")
+    parser.add_argument("--batch_size", type=int, default=256, help="Batch size for retrieval (default: 256)")
 
     # BM25 args
     parser.add_argument("--bm25_index_dir", type=str, help="Directory indice BM25 (PySerini)")
@@ -296,65 +267,20 @@ if __name__ == "__main__":
     parser.add_argument("--collection", type=str, help="Path JSONL collezione (id, contents) per Contriever")
     parser.add_argument("--offsets", type=str, default=None, help="Offsets binari uint64 (opzionale)")
     parser.add_argument("--nprobe", type=int, default=64, help="FAISS nprobe")
-    parser.add_argument(
-        "--in_memory",
-        action="store_true",
-        help="Carica tutta la collezione in RAM (solo mini-run)",
-    )
+    parser.add_argument("--in_memory", action="store_true", help="Carica tutta la collezione in RAM (solo mini-run)")
 
     # DPR args
-    parser.add_argument(
-        "--dpr_index_root_dir",
-        type=str,
-        default=None,
-        help="Directory root DPR con shard part_0..part_N (FAISS PySerini-style)",
-    )
-    parser.add_argument(
-        "--docstore_index_dir",
-        type=str,
-        default=None,
-        help="Indice Lucene con storeRaw per docid->contents (può essere anche l'indice BM25 se storeRaw).",
-    )
-    parser.add_argument(
-        "--dpr_query_encoder_name",
-        type=str,
-        default="facebook/dpr-question_encoder-multiset-base",
-        help="HF model name per DPR question encoder",
-    )
-    parser.add_argument(
-        "--max_loaded_docid_shards",
-        type=int,
-        default=16,
-        help="LRU cache size per shard docid (DPR)",
-    )
-    parser.add_argument(
-        "--dpr_threads",
-        type=int,
-        default=8,
-        help="FAISS omp threads (CPU) per DPR",
-    )
-    parser.add_argument(
-        "--dpr_encode_batch_size",
-        type=int,
-        default=32,
-        help="Batch size per encoding delle query DPR (HF)",
-    )
-    parser.add_argument(
-        "--dpr_max_query_len",
-        type=int,
-        default=256,
-        help="Max token length per query DPR",
-    )
+    parser.add_argument("--dpr_index_root_dir", type=str, default=None,
+        help="Directory root DPR con shard part_0..part_N (FAISS PySerini-style)")
+    parser.add_argument("--docstore_index_dir", type=str, default=None,
+        help="Indice Lucene con storeRaw per docid->contents (può essere anche l'indice BM25 se storeRaw).")
+    parser.add_argument("--max_loaded_docid_shards", type=int, default=16, help="LRU cache size per shard docid (DPR)")
     parser.add_argument("--dpr_mmap", dest="dpr_mmap", action="store_true", help="Usa FAISS mmap per DPR (default)")
     parser.add_argument("--no_dpr_mmap", dest="dpr_mmap", action="store_false", help="Disabilita FAISS mmap per DPR")
     parser.set_defaults(dpr_mmap=True)
 
-    parser.add_argument(
-        "--max_answer_words",
-        type=int,
-        default=250,
-        help="Numero massimo di parole per la risposta (default: 250).",
-    )
+    parser.add_argument("--max_answer_words", type=int, default=250,
+        help="Numero massimo di parole per la risposta (default: 250).")
 
     args = parser.parse_args()
     augment_datasets(args)
