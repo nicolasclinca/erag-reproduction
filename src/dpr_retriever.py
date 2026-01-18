@@ -193,9 +193,6 @@ class DPRShardedSearcher:
         self,
         index_root_dir: str,
         docstore_index_dir: str,
-        query_encoder_name: str = None,
-        device=None,
-        max_query_length: int = None,
         max_loaded_docid_shards: int = 16,
         faiss_threads: Optional[int] = None,
         mmap: bool = True,
@@ -209,11 +206,7 @@ class DPRShardedSearcher:
         self.docstore = LuceneSearcher(docstore_index_dir)
 
         # Query encoder
-        self.encoder = DPRQueryEncoderHF(
-            model_name=query_encoder_name,
-            device=device,
-            max_length=max_query_length,
-        )
+        self.encoder = DPRQueryEncoderHF()
 
         self.mmap = bool(mmap)
 

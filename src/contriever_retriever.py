@@ -133,13 +133,12 @@ def _set_nprobe_deep(index: faiss.Index, nprobe: Optional[int]) -> None:
 # --------- Dense Retriever ---------
 class DenseRetriever:
     def __init__(self, index_path: str, collection_path: str, offsets_path: Optional[str] = None,
-                 nprobe: Optional[int] = None, model_name=None, device=None, max_length=None, dtype=None,
-                 in_memory: bool = False):
+                 nprobe: Optional[int] = None, in_memory: bool = False):
         self.index = faiss.read_index(index_path)
         _set_nprobe_deep(self.index, nprobe)
 
         self.collection = JsonlCollection(collection_path, offsets_path=offsets_path, in_memory=in_memory)
-        self.encoder = ContrieverEncoder(model_name=model_name, device=device, max_length=max_length, dtype=dtype)
+        self.encoder = ContrieverEncoder()
 
     def dense_retrieve(self, query: str, k: int = 50, return_cosine: bool = True) -> Dict:
         q = self.encoder.encode([query], batch_size=1).astype(np.float32)
