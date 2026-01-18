@@ -7,7 +7,7 @@ Encoder Contriever centralizzato per indicizzazione e retrieval.
 - Prefetch tokenization opzionale per throughput elevato (GPU-friendly)
 """
 
-from typing import List, Optional
+from typing import List
 import threading, queue
 
 import numpy as np
@@ -17,6 +17,7 @@ from transformers import AutoTokenizer, AutoModel
 
 # Default condivisi
 MODEL_NAME = "facebook/contriever"
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 MAX_LENGTH = 200
 DTYPE = torch.float16  # usato per autocast su GPU; pooling/normalizzazione in float32
 
@@ -63,12 +64,12 @@ class ContrieverEncoder:
     def __init__(
         self,
         model_name: str = MODEL_NAME,
-        device: Optional[torch.device] = None,
+        device=DEVICE,
         max_length: int = MAX_LENGTH,
         dtype: torch.dtype = DTYPE,
         normalize: bool = True,
     ):
-        self.device = device or (torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"))
+        self.device = device
         self.max_length = max_length
         self.dtype = dtype
         self.normalize = normalize

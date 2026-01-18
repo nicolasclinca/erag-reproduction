@@ -67,6 +67,14 @@ from pyserini.search.lucene import LuceneSearcher
 
 
 # ============================
+# Default
+# ============================
+QUERY_ENCODER_NAME = "facebook/dpr-question_encoder-multiset-base"
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+MAX_QUERY_LENGTH = 256
+
+
+# ============================
 # Helpers: shard listing/sorting
 # ============================
 _PART_RE = re.compile(r"^part_(\d+)$")
@@ -95,8 +103,14 @@ class DPRQueryEncoderHF:
     Ritorna embedding float32 (B, D).
     """
 
-    def __init__(self, model_name: str, device: Optional[torch.device] = None):
-        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    def __init__(
+        self,
+        model_name: str = QUERY_ENCODER_NAME,
+        device= DEVICE,
+        max_length: int = MAX_QUERY_LENGTH,
+    ):
+        self.device = device
+        self.max_length = max_length
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
         self.model = DPRQuestionEncoder.from_pretrained(model_name).to(self.device)
         self.model.eval()
@@ -116,7 +130,7 @@ class DPRQueryEncoderHF:
             self.D = int(out.pooler_output.shape[-1])
 
     @torch.inference_mode()
-    def encode(self, queries: List[str], batch_size: int = 32, max_length: int = 256) -> np.ndarray:
+    def encode(self, queries: List[str], batch_size: int = 32) -> np.ndarray:
         if not queries:
             return np.empty((0, self.D), dtype=np.float32)
 
@@ -128,7 +142,7 @@ class DPRQueryEncoderHF:
                 return_tensors="pt",
                 padding=True,
                 truncation=True,
-                max_length=max_length,
+                max_length=self.max_length,
             )
             enc = {k: v.to(self.device) for k, v in enc.items()}
             out = self.model(**enc)
@@ -171,30 +185,35 @@ class DPRShardedSearcher:
     Oggetto "searcher" da passare a dpr_retrieve/dpr_batch_retrieve.
 
     - index_root_dir: directory contenente part_0..part_N
-    - docstore: LuceneSearcher usato per docid -> raw json -> contents
+    - docstore_index_dir: path a indice Lucene con storeRaw (docid -> raw json -> contents)
     - preload indici: self.indexes è allineato a self.part_dirs (shard_idx)
     """
 
     def __init__(
         self,
         index_root_dir: str,
-        docstore: LuceneSearcher,
-        query_encoder_name: str = "facebook/dpr-question_encoder-multiset-base",
-        device: Optional[torch.device] = None,
+        docstore_index_dir: str,
+        query_encoder_name: str = None,
+        device=None,
+        max_query_length: int = None,
         max_loaded_docid_shards: int = 16,
         faiss_threads: Optional[int] = None,
         mmap: bool = True,
     ):
-        if docstore is None:
-            raise ValueError("docstore (LuceneSearcher) è obbligatorio per restituire i contents.")
-
         self.index_root_dir = index_root_dir
         self.part_dirs = _list_part_dirs(index_root_dir)
         if not self.part_dirs:
             raise ValueError(f"Nessuno shard part_* trovato in: {index_root_dir}")
 
-        self.docstore = docstore
-        self.encoder = DPRQueryEncoderHF(query_encoder_name, device=device)
+        # Docstore Lucene
+        self.docstore = LuceneSearcher(docstore_index_dir)
+
+        # Query encoder
+        self.encoder = DPRQueryEncoderHF(
+            model_name=query_encoder_name,
+            device=device,
+            max_length=max_query_length,
+        )
 
         self.mmap = bool(mmap)
 
@@ -254,7 +273,6 @@ class DPRShardedSearcher:
         queries: List[str],
         k: int = 50,
         encode_batch_size: int = 32,
-        max_query_len: int = 256,
         faiss_threads: Optional[int] = None,
     ) -> List[List[Tuple[str, float]]]:
         """
@@ -275,7 +293,7 @@ class DPRShardedSearcher:
             except Exception:
                 pass
 
-        Q = self.encoder.encode(queries, batch_size=encode_batch_size, max_length=max_query_len)
+        Q = self.encoder.encode(queries, batch_size=encode_batch_size)
         if Q.ndim != 2:
             raise RuntimeError("Query embeddings shape non valida.")
         qn, qd = Q.shape
@@ -304,7 +322,7 @@ class DPRShardedSearcher:
                 metric_type = int(metric_type)
             except Exception:
                 metric_type = faiss.METRIC_INNER_PRODUCT
-            is_distance_metric = (metric_type != faiss.METRIC_INNER_PRODUCT)
+            is_distance_metric = metric_type != faiss.METRIC_INNER_PRODUCT
 
             for i in range(qn):
                 h = heaps[i]
@@ -379,32 +397,7 @@ class DPRShardedSearcher:
 # ============================
 # API
 # ============================
-def create_dpr_searcher(
-    dpr_index_root_dir: str,
-    docstore_index_dir: str,
-    query_encoder_name: str = "facebook/dpr-question_encoder-multiset-base",
-    max_loaded_docid_shards: int = 16,
-    faiss_threads: Optional[int] = None,
-    mmap: bool = True,
-) -> DPRShardedSearcher:
-    """
-    docstore_index_dir: indice Lucene con storeRaw.
-    """
-    lucene = LuceneSearcher(docstore_index_dir)
-    dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    return DPRShardedSearcher(
-        index_root_dir=dpr_index_root_dir,
-        docstore=lucene,
-        query_encoder_name=query_encoder_name,
-        device=dev,
-        max_loaded_docid_shards=max_loaded_docid_shards,
-        faiss_threads=faiss_threads,
-        mmap=mmap,
-    )
-
-
-def dpr_retrieve(query: str, searcher: DPRShardedSearcher = None, k: int = 50) -> List[str]:
+def dpr_retrieve(query: str, searcher: DPRShardedSearcher, k: int = 50) -> List[str]:
     """
     DPR retrieval per singola query.
     Ritorna: lista di 'contents' (stringhe), top-k.
@@ -419,12 +412,11 @@ def dpr_retrieve(query: str, searcher: DPRShardedSearcher = None, k: int = 50) -
 
 def dpr_batch_retrieve(
     queries: List[str],
-    searcher: DPRShardedSearcher = None,
+    searcher: DPRShardedSearcher,
     k: int = 50,
     batch_size: int = 256,
     threads: int = 8,
     encode_batch_size: int = 32,
-    max_query_len: int = 256,
 ) -> Dict[str, List[str]]:
     """
     DPR batch retrieval.
@@ -446,7 +438,6 @@ def dpr_batch_retrieve(
             batch_q,
             k=k,
             encode_batch_size=encode_batch_size,
-            max_query_len=max_query_len,
             faiss_threads=threads,
         )
 
@@ -476,8 +467,8 @@ def main():
     parser = argparse.ArgumentParser(description="DPR retrieval (FAISS sharded) + Lucene docstore for contents.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--dpr_index_root_dir", required=True, help="Dir con part_0..part_N (FAISS)")
-    parser.add_argument("--docstore_index_dir", required=True,
-        help="Indice Lucene con storeRaw per docid->contents (es. bm25_index)")
+    parser.add_argument("--docstore_index_dir", required=True, 
+                        help="Indice Lucene con storeRaw per docid->contents (es. bm25_index)")
     parser.add_argument("--query", required=True, help="Singola query")
     parser.add_argument("--k", type=int, default=50)
     parser.add_argument("--threads", type=int, default=8, help="FAISS omp threads (CPU)")
@@ -489,8 +480,8 @@ def main():
 
     args = parser.parse_args()
 
-    searcher = create_dpr_searcher(
-        dpr_index_root_dir=args.dpr_index_root_dir,
+    searcher = DPRShardedSearcher(
+        index_root_dir=args.dpr_index_root_dir,
         docstore_index_dir=args.docstore_index_dir,
         max_loaded_docid_shards=args.max_loaded_docid_shards,
         faiss_threads=args.threads,

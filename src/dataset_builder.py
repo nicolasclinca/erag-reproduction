@@ -2,7 +2,11 @@
 dataset_builder.py
 Caricamento dataset KILT e creazione di dataset augmented con documenti retrieved.
 Formato output: [{"query": str, "retrieved_docs": [doc1, ...], "gold_answer": str}, ...]
-Supporta BM25 e Contriever per il retrieval.
+
+Supporta:
+- BM25 (PySerini LuceneSearcher su indice BM25)
+- Contriever (FAISS + JSONL collection)
+- DPR (FAISS sharded PySerini-style + docstore Lucene per docid->contents)
 
 Uso CLI:
 
@@ -11,7 +15,7 @@ python dataset_builder.py --datasets ../data/nq-train-kilt.jsonl \
     --method BM25 \
     --bm25_index_dir ../indexes/bm25_index \
     --k 50
-    
+
 Contriever
 python dataset_builder.py --datasets ../data/nq-train-kilt.jsonl \
     --method Contriever \
@@ -21,6 +25,17 @@ python dataset_builder.py --datasets ../data/nq-train-kilt.jsonl \
     --nprobe 64 \
     --k 50 \
     --batch_size 256
+
+DPR
+python dataset_builder.py --datasets ../data/nq-train-kilt.jsonl \
+    --method DPR \
+    --dpr_index_root_dir ../indexes/wiki-dpr-118m \
+    --docstore_index_dir ../indexes/wiki_docstore_lucene \
+    --k 50 \
+    --batch_size 256 \
+    --dpr_threads 8 \
+    --dpr_encode_batch_size 32 \
+    --dpr_max_query_len 256
 """
 
 import json
@@ -29,6 +44,7 @@ import os
 
 from contriever_retriever import DenseRetriever
 from bm25_retriever import bm25_batch_retrieve, create_bm25_searcher
+from dpr_retriever import dpr_batch_retrieve, create_dpr_searcher
 
 
 def load_expected_outputs(filename):
@@ -43,7 +59,7 @@ def load_expected_outputs(filename):
             if golds:
                 expected[query] = golds
     return expected
-    
+
 
 def select_answer(gold_answers, max_words=250):
     """
@@ -77,82 +93,151 @@ def augment_with_documents(dataset, retrieved_results, max_words):
     for query, gold_answers in dataset.items():
         retrieved_docs = retrieved_results.get(query, [])
         target_text = select_answer(gold_answers, max_words)
-        augmented_data.append({
-            "query": query,
-            "retrieved_docs": retrieved_docs,
-            "gold_answer": target_text
-        })
+        augmented_data.append(
+            {
+                "query": query,
+                "retrieved_docs": retrieved_docs,
+                "gold_answer": target_text,
+            }
+        )
     return augmented_data
 
 
-def retrieval_results(queries, method='BM25', k=50, retriever=None, batch_size=256):
+def retrieval_results(
+    queries,
+    method="BM25",
+    k=50,
+    retriever=None,
+    batch_size=256,
+):
     """
     Restituisce {query: [doc1, doc2, ..., dock]}.
     """
-    if method == 'BM25':
+    if method == "BM25":
         return bm25_batch_retrieve(queries, searcher=retriever, k=k, batch_size=batch_size)
-    elif method == 'Contriever':
+
+    if method == "Contriever":
         return retriever.contriever_batch_retrieve(queries=queries, k=k, batch_size=batch_size)
-    else:
-        raise ValueError(f"Unknown method: {method}")
+
+    if method == "DPR":
+        return dpr_batch_retrieve(queries=queries, searcher=retriever, k=k, batch_size=batch_size)
+
+    raise ValueError(f"Unknown method: {method}")
 
 
-def create_retriever(method='BM25', bm25_index_dir=None, faiss_index=None,
-                     collection=None, offsets=None, nprobe=64, in_memory=False):
-    if method == 'BM25':
+def create_retriever(
+    method="BM25",
+    # BM25 args
+    bm25_index_dir=None,
+    # Contriever args
+    faiss_index=None,
+    collection=None,
+    offsets=None,
+    nprobe=64,
+    in_memory=False,
+    # DPR args
+    dpr_index_root_dir=None,
+    docstore_index_dir=None,
+    dpr_query_encoder_name="facebook/dpr-question_encoder-multiset-base",
+    max_loaded_docid_shards=16,
+    dpr_faiss_threads=8,
+    dpr_mmap=True,
+):
+    if method == "BM25":
         if not bm25_index_dir:
             raise ValueError("--bm25_index_dir è obbligatorio con --method BM25")
         retriever = create_bm25_searcher(bm25_index_dir)
-    elif method == 'Contriever':
+
+    elif method == "Contriever":
         missing = []
         if not faiss_index:
             missing.append("--faiss_index")
         if not collection:
             missing.append("--collection")
         if missing:
-            raise ValueError(f"Con --method Contriever servono: --faiss_index e --collection (mancanti: {', '.join(missing)})")
-        retriever = DenseRetriever(
-                index_path=faiss_index,
-                collection_path=collection,
-                offsets_path=offsets,
-                nprobe=nprobe,
-                in_memory=in_memory
+            raise ValueError(
+                f"Con --method Contriever servono: --faiss_index e --collection (mancanti: {', '.join(missing)})"
             )
+        retriever = DenseRetriever(
+            index_path=faiss_index,
+            collection_path=collection,
+            offsets_path=offsets,
+            nprobe=nprobe,
+            in_memory=in_memory,
+        )
+
+    elif method == "DPR":
+        missing = []
+        if not dpr_index_root_dir:
+            missing.append("--dpr_index_root_dir")
+        if not docstore_index_dir:
+            missing.append("--docstore_index_dir")
+        if missing:
+            raise ValueError(
+                f"Con --method DPR servono: --dpr_index_root_dir e --docstore_index_dir "
+                f"(mancanti: {', '.join(missing)})"
+            )
+
+        retriever = create_dpr_searcher(
+            dpr_index_root_dir=dpr_index_root_dir,
+            docstore_index_dir=docstore_index_dir,
+            query_encoder_name=dpr_query_encoder_name,
+            max_loaded_docid_shards=max_loaded_docid_shards,
+            faiss_threads=dpr_faiss_threads,
+            mmap=dpr_mmap,
+        )
+
     else:
         raise ValueError(f"Unknown method: {method}")
+
     return retriever
 
 
 def augment_datasets(args):
     """
     Processa una lista di dataset (args.datasets).
-    - Istanzia il retriever Contriever se richiesto da args.method.
+    - Istanzia il retriever richiesto da args.method.
     - Per ogni dataset:
         * Carica le query e i gold answer
-        * Esegue il retrieval (BM25 o Contriever)
-        * Salva il dataset arricchito in <same_dir>/<basename>-augmented.json
+        * Esegue il retrieval (BM25 / Contriever / DPR)
+        * Salva il dataset arricchito in <out_dir>/<basename>-augmented-<method>.json
     """
 
-    # Istanzia il retriever
-    retriever = create_retriever(method=args.method, bm25_index_dir=args.bm25_index_dir, 
-                                 faiss_index=args.faiss_index, collection=args.collection, 
-                                 offsets=args.offsets, nprobe=args.nprobe, in_memory=args.in_memory)
+    retriever = create_retriever(
+        method=args.method,
+        # BM25
+        bm25_index_dir=args.bm25_index_dir,
+        # Contriever
+        faiss_index=args.faiss_index,
+        collection=args.collection,
+        offsets=args.offsets,
+        nprobe=args.nprobe,
+        in_memory=args.in_memory,
+        # DPR
+        dpr_index_root_dir=args.dpr_index_root_dir,
+        docstore_index_dir=args.docstore_index_dir,
+        dpr_query_encoder_name=args.dpr_query_encoder_name,
+        max_loaded_docid_shards=args.max_loaded_docid_shards,
+        dpr_mmap=args.dpr_mmap,
+    )
 
     for dataset_path in args.datasets:
         if not os.path.exists(dataset_path):
             print(f"File not found: '{dataset_path}'. Skipped.")
             continue
 
-        # Carica query e gold
         expected_outputs = load_expected_outputs(filename=dataset_path)
         queries = list(expected_outputs.keys())
         print(f"Loaded {len(queries)} queries")
 
-        # Retrieval
-        retrieved_results = retrieval_results(queries=queries, method=args.method, k=args.k,
-                                              retriever=retriever, batch_size=args.batch_size)
+        retrieved_results = retrieval_results(
+            queries=queries,
+            method=args.method,
+            k=args.k,
+            retriever=retriever,
+            batch_size=args.batch_size,
+        )
 
-        # Augment e salvataggio
         augmented = augment_with_documents(expected_outputs, retrieved_results, args.max_answer_words)
         dirn = args.augmented_datasets if args.augmented_datasets else (os.path.dirname(dataset_path) or ".")
         os.makedirs(dirn, exist_ok=True)
@@ -166,28 +251,111 @@ def augment_datasets(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Augment datasets with retrieved documents",
-                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("--datasets", type=str, nargs="+", required=True,
-        help="List of paths to the datasets to process (separated by space).")
-    parser.add_argument("--augmented_datasets", type=str, default=None,
-        help="Directory dove salvare i dataset augmentati. Default: stessa cartella del dataset.")
-    parser.add_argument("--method", type=str, choices=["BM25", "Contriever"], default="BM25",
-        help="Retrieval method (BM25 or Contriever)")
-    parser.add_argument("--k", type=int, default=50,
-        help="Number of documents to retrieve for each query (default: 50)")
-    parser.add_argument("--batch_size", type=int, default=256,
-        help="Batch size for dense retrieval (default: 256)")
+    parser = argparse.ArgumentParser(
+        description="Augment datasets with retrieved documents",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--datasets",
+        type=str,
+        nargs="+",
+        required=True,
+        help="List of paths to the datasets to process (separated by space).",
+    )
+    parser.add_argument(
+        "--augmented_datasets",
+        type=str,
+        default=None,
+        help="Directory dove salvare i dataset augmentati. Default: stessa cartella del dataset.",
+    )
+    parser.add_argument(
+        "--method",
+        type=str,
+        choices=["BM25", "Contriever", "DPR"],
+        default="BM25",
+        help="Retrieval method (BM25, Contriever, DPR)",
+    )
+    parser.add_argument(
+        "--k",
+        type=int,
+        default=50,
+        help="Number of documents to retrieve for each query (default: 50)",
+    )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=256,
+        help="Batch size for retrieval (default: 256)",
+    )
+
+    # BM25 args
     parser.add_argument("--bm25_index_dir", type=str, help="Directory indice BM25 (PySerini)")
+
+    # Contriever args
     parser.add_argument("--faiss_index", type=str, help="Path indice FAISS (.faiss) per Contriever")
-    parser.add_argument("--collection", type=str, 
-        help="Path JSONL collezione (id, contents) per Contriever")
+    parser.add_argument("--collection", type=str, help="Path JSONL collezione (id, contents) per Contriever")
     parser.add_argument("--offsets", type=str, default=None, help="Offsets binari uint64 (opzionale)")
     parser.add_argument("--nprobe", type=int, default=64, help="FAISS nprobe")
-    parser.add_argument("--in_memory", action="store_true", 
-        help="Carica tutta la collezione in RAM (solo mini-run)")
-    parser.add_argument("--max_answer_words", type=int, default=250,
-        help="Numero massimo di parole per la risposta (default: 250).")    
+    parser.add_argument(
+        "--in_memory",
+        action="store_true",
+        help="Carica tutta la collezione in RAM (solo mini-run)",
+    )
+
+    # DPR args
+    parser.add_argument(
+        "--dpr_index_root_dir",
+        type=str,
+        default=None,
+        help="Directory root DPR con shard part_0..part_N (FAISS PySerini-style)",
+    )
+    parser.add_argument(
+        "--docstore_index_dir",
+        type=str,
+        default=None,
+        help="Indice Lucene con storeRaw per docid->contents (può essere anche l'indice BM25 se storeRaw).",
+    )
+    parser.add_argument(
+        "--dpr_query_encoder_name",
+        type=str,
+        default="facebook/dpr-question_encoder-multiset-base",
+        help="HF model name per DPR question encoder",
+    )
+    parser.add_argument(
+        "--max_loaded_docid_shards",
+        type=int,
+        default=16,
+        help="LRU cache size per shard docid (DPR)",
+    )
+    parser.add_argument(
+        "--dpr_threads",
+        type=int,
+        default=8,
+        help="FAISS omp threads (CPU) per DPR",
+    )
+    parser.add_argument(
+        "--dpr_encode_batch_size",
+        type=int,
+        default=32,
+        help="Batch size per encoding delle query DPR (HF)",
+    )
+    parser.add_argument(
+        "--dpr_max_query_len",
+        type=int,
+        default=256,
+        help="Max token length per query DPR",
+    )
+    parser.add_argument("--dpr_mmap", dest="dpr_mmap", action="store_true", help="Usa FAISS mmap per DPR (default)")
+    parser.add_argument("--no_dpr_mmap", dest="dpr_mmap", action="store_false", help="Disabilita FAISS mmap per DPR")
+    parser.set_defaults(dpr_mmap=True)
+
+    parser.add_argument(
+        "--max_answer_words",
+        type=int,
+        default=250,
+        help="Numero massimo di parole per la risposta (default: 250).",
+    )
+
     args = parser.parse_args()
     augment_datasets(args)
     print("Process completed.")

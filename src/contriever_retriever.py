@@ -16,14 +16,13 @@ import argparse
 from typing import List, Dict, Optional
 
 import numpy as np
-import torch
 import faiss
 import mmap, struct
 
-from contriever_encoder import (ContrieverEncoder, MODEL_NAME, MAX_LENGTH, DTYPE)
+from contriever_encoder import ContrieverEncoder
 
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 # --------- JSONL collection with optional offsets ---------
 class JsonlCollection:
@@ -134,7 +133,7 @@ def _set_nprobe_deep(index: faiss.Index, nprobe: Optional[int]) -> None:
 # --------- Dense Retriever ---------
 class DenseRetriever:
     def __init__(self, index_path: str, collection_path: str, offsets_path: Optional[str] = None,
-                 nprobe: Optional[int] = None, model_name=MODEL_NAME, device=DEVICE, max_length=MAX_LENGTH, dtype=DTYPE,
+                 nprobe: Optional[int] = None, model_name=None, device=None, max_length=None, dtype=None,
                  in_memory: bool = False):
         self.index = faiss.read_index(index_path)
         _set_nprobe_deep(self.index, nprobe)
