@@ -43,7 +43,7 @@ import os
 
 from contriever_retriever import DenseRetriever
 from bm25_retriever import bm25_batch_retrieve, create_bm25_searcher
-from dpr_retriever import DPRShardedSearcher, dpr_batch_retrieve
+from dense_sharded_retriever import DPRShardedSearcher, dpr_batch_retrieve
 
 
 def load_expected_outputs(filename):

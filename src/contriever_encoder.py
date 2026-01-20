@@ -13,7 +13,8 @@ import threading, queue
 import numpy as np
 import torch
 import torch.nn.functional as F
-from transformers import AutoTokenizer, AutoModel
+from transformers import AutoTokenizer, AutoModel  # type: ignore
+
 
 # Default condivisi
 MODEL_NAME = "facebook/contriever"

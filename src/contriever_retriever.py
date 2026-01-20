@@ -16,12 +16,10 @@ import argparse
 from typing import List, Dict, Optional
 
 import numpy as np
-import faiss
+import faiss  # type: ignore
 import mmap, struct
 
 from contriever_encoder import ContrieverEncoder
-
-
 
 
 # --------- JSONL collection with optional offsets ---------
