@@ -218,10 +218,10 @@ if __name__ == "__main__":
     parser.add_argument("--in_memory", action="store_true", help="Carica tutta la collezione in RAM (solo mini-run)")
 
     # Dense sharded args (dpr/bge/tct)
-    parser.add_argument("--dense_index_root_dir" type=str, default=None,
-        help="Directory root con shard part_0..part_N (FAISS PySerini-style).")
+    parser.add_argument("--dense_index_root_dir", type=str, default=None,
+                        help="Directory root con shard part_0..part_N (FAISS PySerini-style).")
     parser.add_argument("--docstore_index_dir", type=str, default=None,
-        help="Indice Lucene con storeRaw per docid->contents (può essere anche l'indice BM25 se storeRaw).")
+                        help="Indice Lucene con storeRaw per docid->contents (può essere anche l'indice BM25 se storeRaw).")
     parser.add_argument("--max_loaded_docid_shards", type=int, default=16,
                         help="LRU cache size per shard docid (dense sharded)")
     parser.add_argument("--dense_threads", type=int, default=8, help="FAISS omp threads (CPU)")
