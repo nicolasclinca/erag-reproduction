@@ -19,6 +19,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from transformers import AutoTokenizer, AutoModel, DPRQuestionEncoder  # type: ignore
+from transformers import BertModel, BertTokenizer  # type: ignore
 
 
 EncoderType = Literal["dpr", "bge", "tct"]
@@ -138,6 +139,74 @@ class HFQueryEncoder:
         return np.vstack(out_chunks)
 
 
+class TctColBertPyseriniQueryEncoder:
+    """
+    Replica della logica PySerini (TctColBertQueryEncoder):
+      - input: "[CLS] [Q] " + query + "[MASK]" * 36
+      - tokenizer: add_special_tokens=False, truncation=True, max_length=36
+      - embedding: mean(outputs.last_hidden_state[:, 4:, :], dim=1)
+      - NO L2 normalization
+    """
+
+    def __init__(
+        self,
+        model_name: str = MODEL_TCT,
+        device: Optional[Union[str, torch.device]] = None,
+        amp_dtype: torch.dtype = torch.float16,
+    ):
+        self.device = _as_device(device)
+        self.amp_dtype = amp_dtype
+
+        self.model = BertModel.from_pretrained(model_name).to(self.device)
+        self.model.eval()
+        self.tokenizer = BertTokenizer.from_pretrained(
+            model_name, clean_up_tokenization_spaces=True
+        )
+        self.D = int(self.model.config.hidden_size)
+
+        self.max_length = 36
+
+        torch.backends.cuda.matmul.allow_tf32 = True
+        try:
+            torch.set_float32_matmul_precision("high")
+        except Exception:
+            pass
+
+    @torch.inference_mode()
+    def encode(self, queries: List[str], batch_size: int = 32) -> np.ndarray:
+        if not queries:
+            return np.empty((0, self.D), dtype=np.float32)
+
+        bs = max(1, int(batch_size))
+        out_chunks: List[np.ndarray] = []
+
+        mask_suffix = "[MASK]" * self.max_length
+
+        for i in range(0, len(queries), bs):
+            batch_q = queries[i : i + bs]
+            texts = [("[CLS] [Q] " + q + mask_suffix) for q in batch_q]
+
+            enc = self.tokenizer(
+                texts,
+                return_tensors="pt",
+                truncation=True,
+                max_length=self.max_length,
+                add_special_tokens=False,
+            )
+            enc = {k: v.to(self.device) for k, v in enc.items()}
+
+            if self.device.type == "cuda":
+                with torch.amp.autocast(device_type="cuda", dtype=self.amp_dtype):
+                    out = self.model(**enc)
+            else:
+                out = self.model(**enc)
+
+            x = out.last_hidden_state[:, 4:, :].float().mean(dim=1)  # (B, D)
+            out_chunks.append(x.cpu().numpy().astype(np.float32, copy=False))
+
+        return np.vstack(out_chunks)
+
+
 def build_query_encoder(
     encoder_type: EncoderType,
     device: Optional[Union[str, torch.device]] = None,
@@ -166,16 +235,11 @@ def build_query_encoder(
             device=device,
             max_length=max_length,
             normalize=True,
-            query_prefix="", # prefixes like "query: " have not been used in BGE indexing
+            query_prefix="",
         )
 
     # tct
-    return HFQueryEncoder(
+    return TctColBertPyseriniQueryEncoder(
         model_name=MODEL_TCT,
-        model_cls=AutoModel,
-        vector_source="cls",
         device=device,
-        max_length=max_length,
-        normalize=True,
-        query_prefix="",
     )

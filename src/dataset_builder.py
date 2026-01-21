@@ -10,7 +10,7 @@ Supporta:
 
 Note dense-sharded (dpr/bge/tct):
 - Gli indici sono in 120 shard (part_0..part_N) e vengono caricati una volta.
-- L'encoder query è selezionato in base al metodo (dpr/bge/tct) usando query_encoders.py (fixed models).
+- L'encoder query è selezionato in base al metodo (dpr/bge/tct).
 - Retrieval: search su ogni shard (top per_shard_k) + merge top-k globale.
 
 Uso CLI:
