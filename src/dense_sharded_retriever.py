@@ -468,11 +468,8 @@ def main():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--index_root_dir", required=True, help="Dir con part_0..part_N (FAISS shards)")
-    parser.add_argument(
-        "--docstore_index_dir",
-        required=True,
-        help="Indice Lucene con storeRaw per docid->contents (es. wiki_docstore_lucene o bm25_index)",
-    )
+    parser.add_argument("--docstore_index_dir", required=True,
+        help="Indice Lucene con storeRaw per docid->contents (es. wiki_docstore_lucene o bm25_index)")
     parser.add_argument("--encoder_type", choices=["dpr", "bge", "tct"], required=True)
 
     parser.add_argument("--query", required=True, help="Singola query")
@@ -485,12 +482,8 @@ def main():
     parser.add_argument("--no_mmap", dest="mmap", action="store_false", help="Disable mmap")
     parser.set_defaults(mmap=True)
 
-    parser.add_argument(
-        "--no_assert_inner_product",
-        dest="assert_inner_product",
-        action="store_false",
-        help="Disabilita il controllo metric_type==INNER_PRODUCT sugli shard.",
-    )
+    parser.add_argument("--no_assert_inner_product", dest="assert_inner_product", action="store_false",
+        help="Disabilita il controllo metric_type==INNER_PRODUCT sugli shard.")
     parser.set_defaults(assert_inner_product=True)
 
     args = parser.parse_args()
