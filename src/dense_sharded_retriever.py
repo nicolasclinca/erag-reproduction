@@ -44,7 +44,7 @@ import re
 import json
 import heapq
 import argparse
-from typing import Dict, List, Optional, Tuple, Protocol
+from typing import Dict, List, Optional, Tuple, Protocol, TypedDict
 from collections import OrderedDict
 
 import numpy as np
@@ -172,6 +172,12 @@ def _assert_inner_product_metric(indexes: List["faiss.Index"], part_dirs: List[s
 # ============================
 # Sharded FAISS Searcher
 # ============================
+class RetrievedDoc(TypedDict):
+    doc_id: str
+    score: float
+    contents: str
+
+
 class ShardedFaissSearcher:
     """
     Searcher generico su shard FAISS in stile PySerini, usando un QueryEncoder esterno.
@@ -184,7 +190,7 @@ class ShardedFaissSearcher:
         Encoder con .encode(...) -> embedding float32 (B, D)
     docstore_index_dir:
         Indice Lucene con storeRaw per docid -> raw json -> contents.
-        Se None, puoi usare search_docids_batch() ma non docids_to_contents()/batch_retrieve_contents().
+        Se None, puoi usare search_docids_batch() ma non docids_to_contents().
     max_loaded_docid_shards:
         Dimensione cache LRU per docid (shard docid file)
     mmap:
@@ -366,8 +372,8 @@ class ShardedFaissSearcher:
             except Exception:
                 out.append("")
         return out
-
-    def batch_retrieve_contents(
+    
+    def batch_retrieve(
         self,
         queries: List[str],
         k: int = 50,
@@ -375,17 +381,22 @@ class ShardedFaissSearcher:
         faiss_threads: Optional[int] = 8,
         encode_batch_size: int = 32,
         per_shard_k: Optional[int] = None,
-    ) -> Dict[str, List[str]]:
+    ) -> Dict[str, List[RetrievedDoc]]:
         """
-        Convenience API: restituisce {query: [doc_contents...]}.
+        Returns:
+            {query: [{"doc_id": str, "score": float, "contents": str}, ...]}
 
-        Ottimizzazione:
-        - dedup dei docid per ridurre lookup su Lucene.
+        score è l'inner product FAISS (higher=better).
         """
         if not queries:
             return {}
 
-        results: Dict[str, List[str]] = {}
+        if self.docstore is None:
+            raise RuntimeError(
+                "docstore non configurato: passa docstore_index_dir per usare batch_retrieve()."
+            )
+
+        results: Dict[str, List[RetrievedDoc]] = {}
 
         for i in range(0, len(queries), batch_size):
             batch_q = queries[i : i + batch_size]
@@ -396,20 +407,25 @@ class ShardedFaissSearcher:
                 encode_batch_size=encode_batch_size,
                 faiss_threads=faiss_threads,
                 per_shard_k=per_shard_k,
-            )
+            )  # List[List[Tuple[docid, score]]]
 
-            per_query_docids: List[List[str]] = []
+            # raccogli docid per query e dedup globale (per minimizzare lookup Lucene)
+            per_query_pairs: List[List[Tuple[str, float]]] = []
             all_docids: List[str] = []
-            for scored in scored_lists:
-                docids = [d for d, _s in scored if d]
-                per_query_docids.append(docids)
-                all_docids.extend(docids)
 
-            unique_docids = list(dict.fromkeys(all_docids))  # preserva l'ordine
+            for scored in scored_lists:
+                pairs = [(d, float(s)) for d, s in scored if d]
+                per_query_pairs.append(pairs)
+                all_docids.extend([d for d, _s in pairs])
+
+            unique_docids = list(dict.fromkeys(all_docids))  # preserva ordine
             did2cont = dict(zip(unique_docids, self.docids_to_contents(unique_docids)))
 
-            for q, docids in zip(batch_q, per_query_docids):
-                results[q] = [did2cont.get(d, "") for d in docids]
+            for q, pairs in zip(batch_q, per_query_pairs):
+                results[q] = [
+                    {"doc_id": d, "score": float(s), "contents": did2cont.get(d, "")}
+                    for d, s in pairs
+                ]
 
         return results
 
@@ -425,11 +441,13 @@ def dense_sharded_batch_retrieve(
     threads: int = 8,
     encode_batch_size: int = 32,
     per_shard_k: Optional[int] = None,
-) -> Dict[str, List[str]]:
-    """Wrapper funzionale: {query: [contents...]}."""
+) -> Dict[str, List[RetrievedDoc]]:
+    """
+    Wrapper funzionale: {query: [{"doc_id","score","contents"}...]}.
+    """
     if searcher is None:
         raise ValueError("A ShardedFaissSearcher instance must be provided.")
-    return searcher.batch_retrieve_contents(
+    return searcher.batch_retrieve(
         queries=queries,
         k=k,
         batch_size=batch_size,
@@ -444,11 +462,10 @@ def dense_sharded_retrieve(
     searcher: ShardedFaissSearcher,
     k: int = 50,
     per_shard_k: Optional[int] = None,
-) -> List[str]:
-    """Wrapper funzionale: singola query -> [contents...]."""
+) -> List[RetrievedDoc]:
     if searcher is None:
         raise ValueError("A ShardedFaissSearcher instance must be provided.")
-    out = searcher.batch_retrieve_contents(
+    out = searcher.batch_retrieve(
         queries=[query],
         k=k,
         batch_size=1,

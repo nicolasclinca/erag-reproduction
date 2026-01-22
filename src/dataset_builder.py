@@ -101,21 +101,47 @@ def augment_with_documents(dataset, retrieved_results, max_words):
     return augmented_data
 
 
-def retrieval_results(queries, method="BM25", k=50, retriever=None, batch_size=256, dense_threads=8, 
-                      dense_encode_batch_size=32, per_shard_k=None):
+def retrieval_results(
+    queries,
+    method="bm25",
+    k=50,
+    retriever=None,
+    batch_size=256,
+    dense_threads=8,
+    dense_encode_batch_size=32,
+    per_shard_k=None,
+):
     """
-    Restituisce {query: [doc1, doc2, ..., dock]}.
-    """
-    if method == "BM25":
-        return bm25_batch_retrieve(queries, searcher=retriever, k=k, batch_size=batch_size)
+    Returns {query: [doc_contents1, doc_contents2, ...]}.
 
-    if method == "Contriever":
-        return retriever.contriever_batch_retrieve(queries=queries, k=k, batch_size=batch_size)
+    Nota: bm25_batch_retrieve e contriever_batch_retrieve ora ritornano anche doc_id e score,
+    quindi qui estraiamo solo i contents per non rompere l'augmenting attuale.
+    """
+    method = (method or "").lower()
+
+    if method == "bm25":
+        full = bm25_batch_retrieve(
+            queries, searcher=retriever, k=k, batch_size=batch_size
+        )
+        return {q: [d.get("contents", "") for d in docs] for q, docs in full.items()}
+
+    if method == "contriever":
+        full = retriever.contriever_batch_retrieve(
+            queries=queries, k=k, batch_size=batch_size
+        )
+        return {q: [d.get("contents", "") for d in docs] for q, docs in full.items()}
 
     if method in ("dpr", "bge", "tct"):
-        return dense_sharded_batch_retrieve(queries=queries, searcher=retriever, k=k, batch_size=batch_size,
-                                            threads=dense_threads, encode_batch_size=dense_encode_batch_size, 
-                                            per_shard_k=per_shard_k)
+        full = dense_sharded_batch_retrieve(
+            queries=queries,
+            searcher=retriever,
+            k=k,
+            batch_size=batch_size,
+            threads=dense_threads,
+            encode_batch_size=dense_encode_batch_size,
+            per_shard_k=per_shard_k,
+        )
+        return {q: [d.get("contents", "") for d in docs] for q, docs in full.items()}
 
     raise ValueError(f"Unknown method: {method}")
 

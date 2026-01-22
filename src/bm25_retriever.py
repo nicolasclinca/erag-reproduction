@@ -25,8 +25,14 @@ python bm25_retriever.py --bm25_index_dir ../indexes/bm25_index \
 
 import json
 import argparse
-from typing import List, Dict
+from typing import List, Dict, TypedDict
 from pyserini.search.lucene import LuceneSearcher
+
+
+class RetrievedDoc(TypedDict):
+    doc_id: str
+    score: float
+    contents: str
 
 
 def bm25_retrieve(query: str, searcher: LuceneSearcher = None, k: int = 50) -> List[str]:
@@ -55,19 +61,17 @@ def bm25_batch_retrieve(
     k: int = 50,
     batch_size: int = 256,
     threads: int = 8,
-) -> Dict[str, List[str]]:
+) -> Dict[str, List[RetrievedDoc]]:
     """
-    Execute batch search using Okapi BM25 for multiple queries
-    :param queries: list of user queries
-    :param k: number of passages to retrieve per query
-    :param batch_size: number of queries to process in parallel
-    :param threads: number of threads for PySerini batch_search
-    :return: dictionary mapping each query to its list of top document contents
+    Execute batch search using Okapi BM25 for multiple queries.
+
+    Returns:
+        {query: [{"doc_id": str, "score": float, "contents": str}, ...]}
     """
     if searcher is None:
         raise ValueError("A LuceneSearcher instance must be provided.")
 
-    results: Dict[str, List[str]] = {}
+    results: Dict[str, List[RetrievedDoc]] = {}
 
     for i in range(0, len(queries), batch_size):
         batch = queries[i : i + batch_size]
@@ -76,15 +80,26 @@ def bm25_batch_retrieve(
 
         for idx, query in enumerate(batch):
             qid = str(idx)
-            hits = batch_hits.get(qid, [])
+            hits = batch_hits.get(qid, []) or []
 
-            top_contents: List[str] = []
+            out_list: List[RetrievedDoc] = []
             for hit in hits:
-                doc = searcher.doc(hit.docid)
-                jsondoc = json.loads(doc.raw())
-                top_contents.append(jsondoc["contents"])
+                doc_id = str(hit.docid)
+                score = float(getattr(hit, "score", 0.0))
 
-            results[query] = top_contents
+                contents = ""
+                try:
+                    doc = searcher.doc(hit.docid)
+                    if doc is not None:
+                        raw = doc.raw()
+                        js = json.loads(raw) if raw else {}
+                        contents = js.get("contents") or js.get("text") or ""
+                except Exception:
+                    contents = ""
+
+                out_list.append({"doc_id": doc_id, "score": score, "contents": contents})
+
+            results[query] = out_list
 
     return results
 

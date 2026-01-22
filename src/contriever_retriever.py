@@ -13,13 +13,19 @@ python contriever_retriever.py --faiss_index ./index_out_full/ivfpq_opq_contriev
 import os
 import json
 import argparse
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, TypedDict
 
 import numpy as np
 import faiss  # type: ignore
 import mmap, struct
 
 from contriever_encoder import ContrieverEncoder
+
+
+class RetrievedDoc(TypedDict):
+    doc_id: str
+    score: float
+    contents: str
 
 
 # --------- JSONL collection with optional offsets ---------
@@ -175,16 +181,46 @@ class DenseRetriever:
         k: int = 50,
         batch_size: int = 256,
         return_cosine: bool = False,
-    ) -> Dict[str, List[str]]:
+    ) -> Dict[str, List[RetrievedDoc]]:
         """
-        Restituisce {query: [doc1, doc2, ..., dock]} usando Contriever in batch.
+        Returns:
+            {query: [{"doc_id": str, "score": float, "contents": str}, ...]}
+
+        score:
+          - se return_cosine=True usa approx_cosine (higher=better)
+          - altrimenti usa -L2 (higher=better e preserva il ranking)
         """
-        out: Dict[str, List[str]] = {}
+        out: Dict[str, List[RetrievedDoc]] = {}
+
         for i in range(0, len(queries), batch_size):
             batch_q = queries[i : i + batch_size]
-            results = self.batch_dense_retrieve(batch_q, k=k, return_cosine=return_cosine)
-            for q, r in zip(batch_q, results):
-                out[q] = r["documents"]
+            dense_results = self.batch_dense_retrieve(
+                batch_q, k=k, batch_size=batch_size, return_cosine=return_cosine
+            )
+
+            for q, r in zip(batch_q, dense_results):
+                ids = r.get("ids", [])
+                docs = r.get("documents", [])
+                dists = r.get("distances_l2", [])
+                cos = r.get("approx_cosine", None)
+
+                per_q: List[RetrievedDoc] = []
+                for j in range(min(len(ids), len(docs))):
+                    did = int(ids[j])
+                    if did < 0:
+                        continue
+
+                    if return_cosine and cos is not None and j < len(cos):
+                        score = float(cos[j])
+                    else:
+                        score = -float(dists[j]) if j < len(dists) else 0.0
+
+                    per_q.append(
+                        {"doc_id": str(did), "score": score, "contents": docs[j] or ""}
+                    )
+
+                out[q] = per_q
+
         return out
 
 
