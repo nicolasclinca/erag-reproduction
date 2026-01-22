@@ -15,13 +15,13 @@ Note dense-sharded (dpr/bge/tct):
 
 Uso CLI:
 
-bm25
+BM25:
 python dataset_builder.py --datasets ../data/nq-train-kilt.jsonl \
     --method bm25 \
     --bm25_index_dir ../indexes/bm25_index \
     --k 50
 
-contriever
+Contriever:
 python dataset_builder.py --datasets ../data/nq-train-kilt.jsonl \
     --method contriever \
     --faiss_index ./index_out_full/ivfpq_opq_contriever.faiss \
@@ -31,7 +31,7 @@ python dataset_builder.py --datasets ../data/nq-train-kilt.jsonl \
     --k 50 \
     --batch_size 256
 
-bge (dense-sharded)
+Dense-sharded (bge/dpr/tct):
 python dataset_builder.py --datasets ../data/nq-train-kilt.jsonl \
     --method bge \
     --dense_index_root_dir ../indexes/wiki-bge-118m \
