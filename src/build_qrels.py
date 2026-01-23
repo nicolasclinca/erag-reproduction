@@ -20,9 +20,9 @@ Output:
 Uso:
 python build_qrels.py \
   --datasets ../data/nq-train-kilt.jsonl \
-  --run ../runs/nq_bm25.txt \
-  --output ../qrels/nq_bm25_qrels.txt \
-  --format txt \
+  --run ../runs/nq_bm25.csv \
+  --output ../qrels/nq_bm25_qrels.csv \
+  --format csv \
   --overwrite
 """
 
