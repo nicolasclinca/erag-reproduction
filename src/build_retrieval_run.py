@@ -336,7 +336,7 @@ def main() -> None:
 
     print(f"Loaded {len(qid_query_pairs)} (qid,query) pairs; unique queries = {len(unique_queries)}")
 
-    # 2) Create retriever (reuse dataset_builder.create_retriever)
+    # 2) Create retriever
     retriever = create_retriever(args)
 
     # 3) Retrieval on unique queries
