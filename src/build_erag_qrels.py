@@ -498,9 +498,198 @@ def write_qrels_csv(triples: List[Dict[str, Any]], out_path: str, score_precisio
             w.writerow([qid, did, rel_out])
 
 
-# -----------------------------
-# CLI
-# -----------------------------
+def _limit_docids_per_query(retrieval_results: Dict[str, List[str]], k: int) -> Dict[str, List[str]]:
+    """Ritorna una copia di retrieval_results limitata ai primi k doc_id per query_id."""
+    return {qid: (docs or [])[:k] for qid, docs in retrieval_results.items()}
+
+
+def _build_generator_input_from_ids(
+    retrieval_results_topk: Dict[str, List[str]],
+    query_id_to_query: Dict[str, str],
+    doc_id_to_document: Dict[str, str],
+) -> Dict[str, List[str]]:
+    """
+    Converte {query_id: [doc_id,...]} in {query_text: [doc_text,...]} per il generator.
+    Se più query_id condividono lo stesso query_text, li deduplica (stessa generazione).
+    """
+    gen_input: Dict[str, List[str]] = {}
+    for qid, docids in retrieval_results_topk.items():
+        qtext = query_id_to_query.get(qid, None)
+        if not qtext:
+            continue
+
+        if qtext in gen_input:
+            continue  # dedup per query text
+
+        docs_text = [doc_id_to_document.get(str(did), "") for did in (docids or [])]
+        gen_input[qtext] = docs_text
+    return gen_input
+
+
+def evaluation_e2e_to_csv(
+    retrieval_results: Dict[str, List[str]],
+    query_id_to_query: Dict[str, str],
+    doc_id_to_document: Dict[str, str],
+    expected_outputs: Dict[str, List[str]],
+    text_generator,
+    downstream_metric_func,
+    k_values: List[int],
+    output_dir: str,
+    tag: str,
+    *,
+    overwrite: bool = False,
+    score_precision: int = 6,
+) -> Tuple[Dict[str, Dict[str, float]], Dict[str, float]]:
+    """
+    Valutazione end-to-end per ogni k in k_values.
+
+    Log:
+    - CSV per-query: query_id, score, k
+    - CSV medie: k, average_score
+
+    Returns:
+      all_e2e_scores: {"k_<k>": {query_id: score}}
+      average_e2e_scores: {"k_<k>": avg_score}
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    per_query_csv = os.path.join(output_dir, f"end_to_end_{tag}.csv")
+    avg_csv = os.path.join(output_dir, f"end_to_end_averages_{tag}.csv")
+
+    for p in (per_query_csv, avg_csv):
+        if os.path.exists(p) and not overwrite:
+            raise FileExistsError(f"Output exists: {p} (use --overwrite)")
+
+    qids = sorted(retrieval_results.keys())
+    fmt = f"{{:.{int(score_precision)}f}}"
+
+    all_e2e_scores: Dict[str, Dict[str, float]] = {}
+    average_e2e_scores: Dict[str, float] = {}
+
+    with open(per_query_csv, "w", encoding="utf-8", newline="") as f_per, open(
+        avg_csv, "w", encoding="utf-8", newline=""
+    ) as f_avg:
+        w_per = csv.writer(f_per)
+        w_avg = csv.writer(f_avg)
+
+        w_per.writerow(["query_id", "score", "k"])
+        w_avg.writerow(["k", "average_score"])
+
+        for k in sorted(set(int(x) for x in k_values)):
+            retrieval_topk = _limit_docids_per_query(retrieval_results, k)
+            gen_input = _build_generator_input_from_ids(retrieval_topk, query_id_to_query, doc_id_to_document)
+
+            generated_by_qtext = text_generator(gen_input) if gen_input else {}
+            if set(generated_by_qtext.keys()) != set(gen_input.keys()):
+                raise RuntimeError("The text_generator function did not return outputs for all given inputs.")
+
+            # map back to qid
+            generated_by_qid: Dict[str, str] = {}
+            gold_by_qid: Dict[str, List[str]] = {}
+            for qid in qids:
+                qtext = query_id_to_query[qid]
+                generated_by_qid[qid] = generated_by_qtext.get(qtext, "")
+                gold_by_qid[qid] = expected_outputs.get(qid, []) or []
+
+            scores_by_qid = downstream_metric_func(generated_by_qid, gold_by_qid) if qids else {}
+            # enforce all qids
+            scores_by_qid = {qid: float(scores_by_qid.get(qid, 0.0)) for qid in qids}
+
+            avg = (sum(scores_by_qid.values()) / len(scores_by_qid)) if scores_by_qid else 0.0
+
+            key = f"k_{k}"
+            all_e2e_scores[key] = scores_by_qid
+            average_e2e_scores[key] = float(avg)
+
+            # write rows
+            for qid in qids:
+                w_per.writerow([qid, fmt.format(scores_by_qid[qid]), k])
+            w_avg.writerow([k, fmt.format(avg)])
+
+    print(f"Saved end-to-end per-query CSV -> {per_query_csv}")
+    print(f"Saved end-to-end averages CSV -> {avg_csv}")
+
+    return all_e2e_scores, average_e2e_scores
+
+
+def compute_correlations_and_log(
+    erag_results: Dict[str, Any],
+    retrieval_metrics: List[str],
+    all_e2e_scores: Dict[str, Dict[str, float]],
+    default_k: int,
+    output_dir: str,
+    tag: str,
+    *,
+    overwrite: bool = False,
+) -> Dict[str, Any]:
+    """
+    Calcola correlazioni Spearman/Kendall tra metriche eRAG (per_input) e punteggi end-to-end.
+    Salva un JSON: correlations_<tag>.json
+
+    Returns:
+      correlations: {metric_name: {spearman_corr, spearman_p, kendall_corr, kendall_p}}
+    """
+    import re
+    import scipy.stats as stats
+
+    os.makedirs(output_dir, exist_ok=True)
+    out_path = os.path.join(output_dir, f"correlations_{tag}.json")
+    if os.path.exists(out_path) and not overwrite:
+        raise FileExistsError(f"Output exists: {out_path} (use --overwrite)")
+
+    per_input = erag_results.get("per_input", {}) or {}
+
+    def _select_k_key_for_metric(metric_name: str, fallback: int) -> Tuple[str, int]:
+        m = re.search(r"(\d+)$", metric_name)
+        k = int(m.group(1)) if m else int(fallback)
+        return f"k_{k}", k
+
+    correlations: Dict[str, Any] = {}
+
+    for metric_name in retrieval_metrics:
+        e2e_key, k_used = _select_k_key_for_metric(metric_name, default_k)
+        e2e_scores_dict = all_e2e_scores.get(e2e_key, {}) or {}
+
+        if not e2e_scores_dict:
+            correlations[metric_name] = {
+                "spearman_corr": None,
+                "spearman_p": None,
+                "kendall_corr": None,
+                "kendall_p": None,
+                "note": f"Missing end-to-end scores for {e2e_key}",
+            }
+            continue
+
+        aligned_erag = []
+        aligned_e2e = []
+
+        for qid, e2e_score in e2e_scores_dict.items():
+            erag_score = (per_input.get(qid, {}) or {}).get(metric_name, 0.0)
+            aligned_erag.append(float(erag_score))
+            aligned_e2e.append(float(e2e_score))
+
+        spearman_corr, spearman_p = stats.spearmanr(aligned_erag, aligned_e2e)
+        kendall_corr, kendall_p = stats.kendalltau(aligned_erag, aligned_e2e)
+
+        correlations[metric_name] = {
+            "k_used": k_used,
+            "n_pairs": len(aligned_erag),
+            "spearman_corr": spearman_corr,
+            "spearman_p": spearman_p,
+            "kendall_corr": kendall_corr,
+            "kendall_p": kendall_p,
+        }
+
+        print(f"\nEvaluated {len(aligned_erag)} pairs.")
+        print(f"For metric {metric_name} (k={k_used}):")
+        print(f"  Spearman correlation: {spearman_corr} (p={spearman_p})")
+        print(f"  Kendall correlation:  {kendall_corr} (p={kendall_p})")
+
+    save_json(correlations, out_path)
+    print(f"Saved correlations -> {out_path}")
+    return correlations
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Build eRAG qrels from a retrieval run file, KILT dataset(s), and collection JSONL.",
@@ -549,10 +738,11 @@ def main() -> None:
     os.makedirs(args.output_dir, exist_ok=True)
 
     # 1) metriche retrieval (come evaluation.py)
-    _doc_n, retrieval_metrics = define_retrieval_metrics(args.k_values, args.metric)
+    doc_n, retrieval_metrics = define_retrieval_metrics(args.k_values, args.metric)
     downstream_metric_func = METRICS[args.metric]
     print(f"Downstream metric: {args.metric}")
     print(f"Retrieval metrics: {retrieval_metrics}")
+    print(f"doc_n (fallback k): {doc_n}")
 
     # 2) run -> retrieval_results {qid:[docid,...]}
     retrieval_results, needed_qids, needed_docids, run_id = load_run_grouped(
@@ -576,7 +766,7 @@ def main() -> None:
             f"{len(missing_qids)} query_id from run not found in dataset(s). Examples: {missing_qids[:10]}"
         )
 
-    # assicura chiavi identiche (erag_mod.eval richiede match)
+    # allineamento chiavi (erag_mod.eval richiede match)
     expected_outputs = {qid: expected_outputs.get(qid, []) for qid in retrieval_results.keys()}
 
     # 4) collection -> doc_id_to_document
@@ -622,7 +812,7 @@ def main() -> None:
         doc_id_to_document=doc_id_to_document,
     )
 
-    # 7) save logs
+    # 7) save eRAG logs
     tag = f"{run_id}_{args.metric}"
 
     aggregated_path = os.path.join(args.output_dir, f"aggregated_{tag}.json")
@@ -641,11 +831,39 @@ def main() -> None:
     save_json(triples, triples_path)
     write_qrels_csv(triples, qrels_csv_path, score_precision=args.score_precision)
 
-    print("Saved outputs:")
+    print("Saved eRAG outputs:")
     print(f"  aggregated: {aggregated_path}")
     print(f"  per_input:  {per_input_path}")
     print(f"  triples:    {triples_path}")
     print(f"  qrels csv:  {qrels_csv_path}")
+
+    # 8) end-to-end per k (CSV) + averages (CSV)
+    print("\nEvaluating end-to-end scores for each k...")
+    all_e2e_scores, avg_e2e_scores = evaluation_e2e_to_csv(
+        retrieval_results=retrieval_results,
+        query_id_to_query=query_id_to_query,
+        doc_id_to_document=doc_id_to_document,
+        expected_outputs=expected_outputs,
+        text_generator=t5_generator_for_eval,
+        downstream_metric_func=downstream_metric_func,
+        k_values=args.k_values,
+        output_dir=args.output_dir,
+        tag=tag,
+        overwrite=args.overwrite,
+        score_precision=args.score_precision,
+    )
+
+    # 9) correlations eRAG vs end-to-end
+    print("\nComputing correlations (eRAG vs end-to-end)...")
+    _ = compute_correlations_and_log(
+        erag_results=erag_results,
+        retrieval_metrics=retrieval_metrics,
+        all_e2e_scores=all_e2e_scores,
+        default_k=doc_n,
+        output_dir=args.output_dir,
+        tag=tag,
+        overwrite=args.overwrite,
+    )
 
 
 if __name__ == "__main__":
