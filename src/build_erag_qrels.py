@@ -1,27 +1,79 @@
 """
 build_erag_qrels.py
 
-Costruisce qrels eRAG (query_id, doc_id, relevance) dove relevance è la performance downstream
-(EM/F1) ottenuta generando una risposta usando SOLO quel documento.
+Script end-to-end per riprodurre eRAG e generare qrels “model-based”.
 
-Input:
-- run file (csv/json/txt) stile trec-rag: query_id, doc_id, score, run_id
-- dataset KILT .jsonl (per query_id->query_text e query_id->gold_answers)
-- collection .jsonl (per doc_id->contents)
+Obiettivi
+---------
+1) Generare qrels eRAG (query_id, doc_id, relevance) dove:
+   - doc_id proviene dal run file di retrieval
+   - relevance è il punteggio downstream (EM/Accuracy binario oppure F1 continuo in [0,1])
+     ottenuto facendo generazione usando SOLO quel documento come contesto (eRAG).
 
-Output (in output_dir):
-- aggregated_<runid>_<metric>.json
-- per_input_<runid>_<metric>.json
-- qrels_<runid>_<metric>.csv    (query_id, doc_id, relevance)
-- triples_<runid>_<metric>.json (debug: query_id, doc_id, score)
+2) Calcolare anche:
+   - valutazione end-to-end (FiD) per ogni k in k_values, loggando i punteggi in CSV
+   - correlazioni (Spearman/Kendall) tra metriche eRAG e punteggi end-to-end
 
-Esegue erag_mod.eval in ID-mode:
+Input
+-----
+- Run file di retrieval (csv/json/txt) stile trec-rag, generabile con build_retrieval_run.py:
+    query_id, doc_id, score, run_id
+  Il ranking viene ricostruito ordinando per score decrescente (dedup doc_id per query).
+
+- Dataset KILT (.jsonl):
+  usato per costruire:
+    * query_id -> query_text
+    * query_id -> lista gold answers (expected_outputs)
+
+- Collezione documenti (.jsonl):
+  usata per costruire:
+    * doc_id -> document contents
+  Supporta due casi:
+    * doc_id stringa (es. "<wikipedia_id>_<segment_id>"): lookup per match sul campo JSON "id" (scan streaming)
+    * doc_id numerico (es. Contriever): interpreta doc_id come row-id nella collection;
+      se passi --offsets (uint64) usa random-access (consigliato), altrimenti fa scan lento.
+
+- Modello FiD-T5 (directory HuggingFace) per generazione.
+
+Metriche
+--------
+- Downstream metric: em | accuracy | f1
+- Retrieval metrics:
+  per ogni k in k_values:
+    P_k, success_k
+    + (se metric != "f1") recall_k, ndcg_cut_k, map_cut_k, recip_rank_cut_k
+
+Esecuzione eRAG (ID-mode)
+------------------------
+Chiama erag_mod.eval con:
   retrieval_results: {query_id: [doc_id1, doc_id2, ...]}
   expected_outputs:  {query_id: [gold1, gold2, ...]}
   query_id_to_query: {query_id: query_text}
   doc_id_to_document:{doc_id: doc_text}
 
-Uso CLI:
+Output (in output_dir)
+----------------------
+Log eRAG:
+- aggregated_<runid>_<metric>.json
+- per_input_<runid>_<metric>.json
+- triples_<runid>_<metric>.json
+    lista di {query_id, doc_id, score} dove score = downstream_metric (label di rilevanza eRAG)
+- qrels_<runid>_<metric>.csv
+    CSV con header: query_id, doc_id, relevance
+    (stessa struttura di build_qrels.py; relevance è int per EM/accuracy, float per F1)
+
+Log end-to-end:
+- end_to_end_<runid>_<metric>.csv
+    righe: query_id, score, k
+- end_to_end_averages_<runid>_<metric>.csv
+    righe: k, average_score
+
+Log correlazioni:
+- correlations_<runid>_<metric>.json
+    per ogni metrica eRAG: Spearman/Kendall rispetto agli end-to-end score (k scelto dal suffisso della metrica)
+
+Uso CLI
+-------
 
 1) BM25 / Dense-sharded (doc_id stringa tipo "<wikipedia_id>_<segment_id>"):
 python build_erag_qrels.py \
