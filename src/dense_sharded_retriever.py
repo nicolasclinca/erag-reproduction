@@ -28,6 +28,15 @@ Nota su per_shard_k (accuratezza):
 - Impostare per_shard_k > k riduce il rischio di “miss”.
 - Default: per_shard_k = k*4 (capped a 1000).
 
+Per docstore Lucene:
+python -m pyserini.index.lucene \
+  -collection JsonCollection \
+  -input ../data/collection \
+  -index ../indexes/wiki_docstore_lucene \
+  -generator DefaultLuceneDocumentGenerator \
+  -threads 8 \
+  -storeRaw
+
 Uso CLI:
 python dense_sharded_retriever.py \
   --index_root_dir ../indexes/wiki-bge-118m \
