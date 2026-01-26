@@ -1,0 +1,192 @@
+"""
+build_qrels_og.py
+
+Crea un file di qrels_og (query_id, doc_id, relevance) in formato CSV
+a partire da:
+1) uno o più dataset KILT (.jsonl) contenenti gold evidence in output[*].provenance[*].wikipedia_id
+2) la collezione segmentata (JSONL) prodotta da preprocess_wikipedia.py con campi tipici:
+   {"id": "<wikipedia_id>_<segment_id>", "contents": ...}
+
+Regola di relevance (segment-level):
+- un segmento (doc_id completo, es. "40885965_20") è rilevante (relevance=1)
+  se la parte wikipedia_id del doc_id è tra i wikipedia_id gold del dataset per quella query_id.
+- In pratica qui scriviamo SOLO i segmenti rilevanti (qrels "solo-positivi"):
+  tutti i retrieved doc non presenti in qrels saranno considerati non rilevanti dai tool di evaluation.
+
+Output:
+- CSV con header: query_id,doc_id,relevance
+
+Uso:
+python build_qrels_og.py \
+  --datasets ../data/nq-train-kilt.jsonl \
+  --collection ../data/collection/wikipedia_passages.jsonl \
+  --output ../qrels/nq_qrels_og.csv \
+  --overwrite
+"""
+
+from __future__ import annotations
+
+import os
+import json
+import csv
+import argparse
+from typing import Dict, Iterator, List, Optional, Set, Tuple
+
+from build_qrels import load_kilt_gold_wikipedia_ids, wikipedia_id_from_doc_id
+
+
+# -----------------------------
+# Collection parsing
+# -----------------------------
+def iter_collection_doc_ids(collection_path: str, max_docs: Optional[int] = None) -> Iterator[str]:
+    """
+    Itera i doc_id (campo "id") dalla collezione JSONL.
+    """
+    with open(collection_path, "r", encoding="utf-8") as f:
+        for i, line in enumerate(f):
+            if max_docs is not None and i >= max_docs:
+                break
+            line = line.strip()
+            if not line:
+                continue
+
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue
+
+            did = (rec.get("id") or rec.get("doc_id") or "").strip()
+            if did:
+                yield str(did)
+
+
+# -----------------------------
+# Inversion: wikipedia_id -> [query_id, ...]
+# -----------------------------
+def build_wikipedia_id_to_qids(gold_wiki_ids_by_qid: Dict[str, Set[str]]) -> Dict[str, List[str]]:
+    """
+    Costruisce una mappa inversa:
+        {wikipedia_id: [query_id1, query_id2, ...]}
+    """
+    wid2qids: Dict[str, List[str]] = {}
+    for qid, wids in gold_wiki_ids_by_qid.items():
+        if not wids:
+            continue
+        for wid in wids:
+            wid = str(wid).strip()
+            if not wid:
+                continue
+            wid2qids.setdefault(wid, []).append(qid)
+    return wid2qids
+
+
+# -----------------------------
+# Qrels OG rows (streaming)
+# -----------------------------
+def iter_qrels_og_rows(
+    collection_doc_ids: Iterator[str],
+    wid2qids: Dict[str, List[str]],
+) -> Iterator[Tuple[str, str, int]]:
+    """
+    Yields (query_id, doc_id, relevance=1) per tutti i segmenti della collezione
+    che appartengono a un wikipedia_id gold di una o più query.
+    """
+    for docid in collection_doc_ids:
+        wid = wikipedia_id_from_doc_id(docid)
+        qids = wid2qids.get(wid, None)
+        if not qids:
+            continue
+        for qid in qids:
+            yield qid, docid, 1
+
+
+def write_qrels_og_csv(rows: Iterator[Tuple[str, str, int]], out_path: str) -> int:
+    """
+    Scrive CSV streaming e ritorna il numero di righe scritte (escl. header).
+    """
+    n = 0
+    with open(out_path, "w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["query_id", "doc_id", "relevance"])
+        for qid, docid, rel in rows:
+            w.writerow([qid, docid, int(rel)])
+            n += 1
+    return n
+
+
+# -----------------------------
+# CLI
+# -----------------------------
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Build qrels_og CSV (only-positive segment-level qrels) from KILT dataset(s) and a segmented collection.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+
+    parser.add_argument("--datasets", type=str, nargs="+", required=True, help="Path(s) to KILT .jsonl dataset(s).")
+    parser.add_argument("--collection", type=str, required=True, help="Path to segmented collection JSONL (wikipedia_passages.jsonl).")
+
+    parser.add_argument("--max_examples", type=int, default=None, help="Limit examples per dataset (debug).")
+    parser.add_argument(
+        "--prefix_with_dataset",
+        action="store_true",
+        help="If multiple datasets, prefix query_id with dataset basename to avoid collisions.",
+    )
+
+    parser.add_argument("--max_collection_docs", type=int, default=None, help="Limit docs read from collection (debug).")
+
+    parser.add_argument("--output", type=str, required=True, help="Output qrels_og CSV path.")
+    parser.add_argument("--overwrite", action="store_true", help="Overwrite output if exists.")
+
+    args = parser.parse_args()
+
+    if not os.path.exists(args.collection):
+        raise FileNotFoundError(f"Collection not found: {args.collection}")
+
+    os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
+    if os.path.exists(args.output) and not args.overwrite:
+        raise FileExistsError(f"Output exists: {args.output} (use --overwrite)")
+
+    # 1) Load gold wikipedia ids by query_id
+    gold_map = load_kilt_gold_wikipedia_ids(
+        datasets=args.datasets,
+        max_examples=args.max_examples,
+        prefix_with_dataset=args.prefix_with_dataset,
+    )
+    if not gold_map:
+        raise RuntimeError("No gold data loaded from dataset(s).")
+
+    wid2qids = build_wikipedia_id_to_qids(gold_map)
+    needed_wids = set(wid2qids.keys())
+
+    print(f"Loaded queries: {len(gold_map)}")
+    print(f"Unique gold wikipedia_id: {len(needed_wids)}")
+
+    # 2) Stream collection -> stream qrels rows -> write
+    coll_docids = iter_collection_doc_ids(args.collection, max_docs=args.max_collection_docs)
+
+    # track missing wikipedia_id (best-effort, by observing seen ids in collection)
+    remaining_wids = set(needed_wids)
+
+    def _rows_with_tracking() -> Iterator[Tuple[str, str, int]]:
+        nonlocal remaining_wids
+        for docid in coll_docids:
+            wid = wikipedia_id_from_doc_id(docid)
+            if wid in remaining_wids:
+                remaining_wids.discard(wid)
+
+            qids = wid2qids.get(wid, None)
+            if not qids:
+                continue
+            for qid in qids:
+                yield qid, docid, 1
+
+    n_rows = write_qrels_og_csv(_rows_with_tracking(), args.output)
+
+    print(f"Saved qrels_og -> {args.output} (rows={n_rows})")
+    if remaining_wids:
+        print(f"Warning: {len(remaining_wids)} gold wikipedia_id not found in collection (example: {next(iter(remaining_wids))})")
+
+
+if __name__ == "__main__":
+    main()
