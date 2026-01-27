@@ -561,6 +561,7 @@ def main() -> None:
         max_input_len=args.max_input_len,
         max_output_len=args.max_output_len,
         num_beams=args.num_beams,
+        batch_size=1,
     )
 
     # 4) per-file: load doc contents + evaluate
