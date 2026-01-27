@@ -408,11 +408,11 @@ def train(args):
         optimizer.zero_grad(set_to_none=True)
 
         pbar = tqdm(
-            enumerate(train_loader, start=1), 
-            total=len(train_loader), 
+            enumerate(train_loader, start=1),
+            total=len(train_loader),
             desc=f"Epoch {epoch}/{args.num_epochs}",
-            )
-        
+        )
+
         for step_idx, batch in pbar:
             input_ids = batch["input_ids"].to(device)  # (B, N, L)
             attention_mask = batch["attention_mask"].to(device)
@@ -532,65 +532,109 @@ def t5_fid_generator(
     max_input_len: int = 256,
     max_output_len: int = 64,
     num_beams: int = 4,
+    batch_size: int = 16,
     **generate_kwargs,
 ) -> Dict[str, str]:
     """
     FiD generation su un dizionario {query: [doc1, doc2, ...]}.
+
+    Miglioramento efficienza:
+    - batching reale su GPU/CPU: raggruppiamo le query per numero di documenti (FiD richiede N fisso),
+      poi processiamo a batch (tokenize + encoder + generate).
+    - rispetto alla versione precedente (loop query-per-query) riduce overhead Python e aumenta throughput.
+
+    Nota:
+    - Manteniamo la stessa interfaccia {query: [docs]} -> {query: answer}
+    - Se una query non ha documenti, ritorna "Error: No documents provided."
     """
     model.eval()
-    results = {}
+    results: Dict[str, str] = {}
 
-    print(f"Generating answers for {len(queries_and_documents)} queries...")
+    total = len(queries_and_documents)
+    print(f"Generating answers for {total} queries...")
     t0 = time.time()
 
-    for i, (query, docs) in enumerate(queries_and_documents.items(), start=1):
+    if total == 0:
+        return results
+
+    # Prepara items e gestisce query senza docs
+    items: List[tuple[str, List[str]]] = []
+    for query, docs in queries_and_documents.items():
         if not docs:
             results[query] = "Error: No documents provided."
             continue
+        if isinstance(docs, str):
+            docs = [docs]
+        docs = [str(d) for d in docs]
+        items.append((query, docs))
 
-        # Tokenizza i documenti della query con pad dinamico
-        texts = [f"question: {query} context: {doc}" for doc in docs]
-        enc = tokenizer(
-            texts,
-            truncation=True,
-            padding=True,
-            max_length=max_input_len,
-            return_tensors="pt",
-        )
-        input_ids = enc.input_ids.to(device)  # (N, L_i)
-        attention_mask = enc.attention_mask.to(device)
+    # Raggruppa per numero di docs (FiD batchabile se N costante nel batch)
+    groups: Dict[int, List[tuple[str, List[str]]]] = {}
+    for query, docs in items:
+        groups.setdefault(len(docs), []).append((query, docs))
 
-        with torch.inference_mode():
-            # Encoder per-doc
-            enc_out = model.encoder(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                return_dict=True,
+    processed = total - len(items)  # include già gli errori per docs mancanti
+    last_print = 0
+
+    for n_docs, group_items in groups.items():
+        for start in range(0, len(group_items), max(int(batch_size), 1)):
+            batch = group_items[start : start + max(int(batch_size), 1)]
+            bsz = len(batch)
+            if bsz == 0:
+                continue
+
+            queries = [q for q, _ in batch]
+
+            # Flatten: (B*N) testi "question: ... context: ..."
+            flat_texts: List[str] = []
+            for q, docs in batch:
+                # n_docs è fisso per il gruppo
+                for d in docs:
+                    flat_texts.append(f"question: {q} context: {d}")
+
+            enc = tokenizer(
+                flat_texts,
+                truncation=True,
+                padding=True,
+                max_length=max_input_len,
+                return_tensors="pt",
             )
-            last_hidden = enc_out.last_hidden_state  # (N, L, d)
-            N, L, d = last_hidden.shape
+            input_ids = enc.input_ids.to(device)  # (B*N, L)
+            attention_mask = enc.attention_mask.to(device)  # (B*N, L)
 
-            # Concat FiD: (1, N*L, d)
-            enc_hidden_concat = last_hidden.reshape(1, N * L, d)
-            enc_attn_mask = attention_mask.reshape(1, N * L)
+            with torch.inference_mode():
+                # Encoder per-doc (B*N, L, d)
+                enc_out = model.encoder(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    return_dict=True,
+                )
+                last_hidden = enc_out.last_hidden_state
+                _, L, d_model = last_hidden.shape
 
-            encoder_outputs_for_generate = BaseModelOutput(last_hidden_state=enc_hidden_concat)
+                # Concat FiD: (B, N*L, d)
+                enc_hidden_concat = last_hidden.view(bsz, n_docs, L, d_model).reshape(bsz, n_docs * L, d_model)
+                enc_attn_mask = attention_mask.view(bsz, n_docs, L).reshape(bsz, n_docs * L)
 
-            # Decoding
-            gen_ids = model.generate(
-                encoder_outputs=encoder_outputs_for_generate,
-                attention_mask=enc_attn_mask,
-                num_beams=num_beams,
-                max_new_tokens=max_output_len,
-                early_stopping=True,
-                **generate_kwargs,
-            )
+                encoder_outputs_for_generate = BaseModelOutput(last_hidden_state=enc_hidden_concat)
 
-        out_text = tokenizer.decode(gen_ids[0], skip_special_tokens=True).strip()
-        results[query] = out_text
+                gen_ids = model.generate(
+                    encoder_outputs=encoder_outputs_for_generate,
+                    attention_mask=enc_attn_mask,
+                    num_beams=num_beams,
+                    max_new_tokens=max_output_len,
+                    early_stopping=True,
+                    **generate_kwargs,
+                )
 
-        if i % 100 == 0:
-            print(f"  Generated {i}/{len(queries_and_documents)}...")
+            preds = tokenizer.batch_decode(gen_ids, skip_special_tokens=True)
+            for q, p in zip(queries, preds):
+                results[q] = (p or "").strip()
+
+            processed += bsz
+            if processed - last_print >= 100:
+                print(f"  Generated {processed}/{total}...")
+                last_print = processed
 
     print(f"Done. Time: {time.time() - t0:.2f}s")
     return results
@@ -648,8 +692,12 @@ def main():
     p_train.add_argument("--amp", action="store_true", help="Enable mixed precision (fp16)")
     p_train.add_argument("--grad_checkpointing", action="store_true")
     p_train.add_argument("--save_every_epoch", action="store_true")
-    p_train.add_argument("--resume_from", type=str,default=None,
-        help="Path a training_state.pt per riprendere training (resume da inizio epoca).")
+    p_train.add_argument(
+        "--resume_from",
+        type=str,
+        default=None,
+        help="Path a training_state.pt per riprendere training (resume da inizio epoca).",
+    )
     p_train.add_argument("--seed", type=int, default=42)
 
     # Generate
@@ -660,6 +708,7 @@ def main():
     p_gen.add_argument("--max_input_len", type=int, default=256)
     p_gen.add_argument("--max_new_tokens", type=int, default=64)
     p_gen.add_argument("--num_beams", type=int, default=4)
+    p_gen.add_argument("--batch_size", type=int, default=16, help="Batch size per generazione (raggruppando per #docs).")
     p_gen.add_argument("--seed", type=int, default=42)
 
     args = parser.parse_args()
@@ -683,6 +732,7 @@ def main():
             max_input_len=args.max_input_len,
             max_output_len=args.max_new_tokens,
             num_beams=args.num_beams,
+            batch_size=args.batch_size,
         )
 
         os.makedirs(os.path.dirname(args.output_json) or ".", exist_ok=True)
