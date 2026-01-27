@@ -22,7 +22,7 @@ Input necessari
 - --all_runs: CSV con colonne query_id, doc_id (eventuali colonne extra vengono ignorate)
 - --datasets: uno o più file KILT .jsonl (per query_text e gold answers)
 - --collection: JSONL collezione documenti (id, contents)
-- --model_dir: directory HuggingFace del modello FiD-T5
+- --model_dir: directory del modello FiD-T5
 
 Uso CLI
 -------

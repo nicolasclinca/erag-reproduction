@@ -25,7 +25,7 @@ Input
 - collection JSONL per:
     doc_id -> document contents
 
-- modello FiD-T5 (directory HuggingFace) per generazione.
+- modello FiD-T5 per generazione.
 
 Note
 ----
