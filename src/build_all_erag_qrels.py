@@ -11,14 +11,18 @@ Scrive <dataset>_all_qrels.csv con header:
 
 e include SOLO le righe con relevance > 0.
 
-Incremental / cache
+Cache / incremental
 -------------------
-Per evitare di rivalutare due volte la stessa coppia (query_id, doc_id), se nella cartella
-di output è già presente un file <dataset>_all_qrels.csv, questo viene caricato e usato
-come “cache”:
-- le coppie già presenti in quel file non vengono ricalcolate
-- la relevance viene riusata direttamente
-- l'output finale è l'unione tra qrels esistenti e nuove qrels (sempre solo relevance > 0)
+Per evitare di valutare due volte la stessa coppia (query_id, doc_id), usa come cache:
+
+1) Un eventuale file <dataset>_all_qrels.csv già presente nella cartella di output
+   (contiene solo relevance > 0).
+
+2) Eventuali file *_assessed_run.csv presenti nella stessa cartella (generati da
+   build_all_assessed_runs.py), che contengono anche relevance = 0.
+
+La cache “assessed_run” permette di evitare il ricalcolo anche delle coppie già valutate
+con relevance = 0 (che non compaiono in <dataset>_all_qrels.csv).
 
 Nota
 ----
@@ -309,14 +313,41 @@ def load_doc_id_to_document(
 
 
 # -----------------------------
-# Existing qrels cache loading
+# Cache loading: qrels + assessed runs
 # -----------------------------
-def load_existing_qrels_map(qrels_path: str) -> Dict[Tuple[str, str], Any]:
+def _parse_relevance(raw_rel: Any) -> Any:
     """
-    Carica un <dataset>_all_qrels.csv esistente e ritorna un mapping:
+    Parsing robusto:
+    - float(raw_rel) se possibile
+    - se quasi intero -> int (stile codebase)
+    - fallback 0
+    """
+    try:
+        rel_val: Any = float(raw_rel)
+        if abs(rel_val - round(rel_val)) < 1e-12:
+            rel_val = int(round(rel_val))
+        return rel_val
+    except Exception:
+        return 0
+
+
+def list_assessed_run_files(folder: str) -> List[str]:
+    files: List[str] = []
+    for name in os.listdir(folder):
+        p = os.path.join(folder, name)
+        if not os.path.isfile(p):
+            continue
+        if name.lower().endswith("_assessed_run.csv"):
+            files.append(p)
+    return sorted(files)
+
+
+def load_positive_qrels_map(qrels_path: str) -> Dict[Tuple[str, str], Any]:
+    """
+    Carica un <dataset>_all_qrels.csv esistente e ritorna:
       (query_id, doc_id) -> relevance
 
-    Se ci sono duplicati, mantiene la relevance massima.
+    Nota: ci aspettiamo solo relevance > 0, ma facciamo parsing robusto e teniamo max su duplicati.
     """
     rel_map: Dict[Tuple[str, str], Any] = {}
 
@@ -328,13 +359,14 @@ def load_existing_qrels_map(qrels_path: str) -> Dict[Tuple[str, str], Any]:
             if not qid or not did:
                 continue
 
-            raw_rel = row.get("relevance", 0)
+            rel_val = _parse_relevance(row.get("relevance", 0))
             try:
-                rel_val: Any = float(raw_rel)
-                if abs(rel_val - round(rel_val)) < 1e-12:
-                    rel_val = int(round(rel_val))
+                rel_f = float(rel_val)
             except Exception:
-                rel_val = 0
+                rel_f = 0.0
+
+            if rel_f <= 0.0:
+                continue
 
             key = (qid, did)
             if key in rel_map:
@@ -348,6 +380,58 @@ def load_existing_qrels_map(qrels_path: str) -> Dict[Tuple[str, str], Any]:
                 rel_map[key] = rel_val
 
     return rel_map
+
+
+def load_assessed_runs_cache(folder: str) -> Tuple[Set[Tuple[str, str]], Dict[Tuple[str, str], Any], int]:
+    """
+    Scansiona *_assessed_run.csv in folder e ritorna:
+      - evaluated_pairs: set((query_id, doc_id)) per TUTTE le righe (include relevance=0)
+      - positive_rel_map: (qid,did)->relevance SOLO per relevance>0 (max su duplicati)
+      - files_count
+    """
+    evaluated_pairs: Set[Tuple[str, str]] = set()
+    positive_rel_map: Dict[Tuple[str, str], Any] = {}
+
+    files = list_assessed_run_files(folder)
+    for p in files:
+        with open(p, "r", encoding="utf-8", newline="") as f:
+            r = csv.DictReader(f)
+            if not r.fieldnames:
+                continue
+
+            needed = {"query_id", "doc_id", "relevance"}
+            if not needed.issubset(set(r.fieldnames)):
+                continue
+
+            for row in r:
+                qid = str(row.get("query_id", "")).strip()
+                did = str(row.get("doc_id", "")).strip()
+                if not qid or not did:
+                    continue
+
+                key = (qid, did)
+                evaluated_pairs.add(key)
+
+                rel_val = _parse_relevance(row.get("relevance", 0))
+                try:
+                    rel_f = float(rel_val)
+                except Exception:
+                    rel_f = 0.0
+
+                if rel_f <= 0.0:
+                    continue
+
+                if key in positive_rel_map:
+                    try:
+                        prev = float(positive_rel_map[key])
+                        cur = float(rel_val)
+                        positive_rel_map[key] = rel_val if cur > prev else positive_rel_map[key]
+                    except Exception:
+                        positive_rel_map[key] = rel_val
+                else:
+                    positive_rel_map[key] = rel_val
+
+    return evaluated_pairs, positive_rel_map, len(files)
 
 
 # -----------------------------
@@ -385,39 +469,8 @@ def format_relevance(score: float, score_precision: int = 6) -> Any:
     return float(fmt.format(s))
 
 
-def _write_qrels_map_csv(
-    rel_map: Dict[Tuple[str, str], Any],
-    out_path: str,
-    *,
-    score_precision: int = 6,
-) -> None:
-    """
-    Scrive un mapping (qid,did)->relevance su CSV. Include solo relevance>0.
-    """
-    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    tmp_path = out_path + ".tmp"
-
-    with open(tmp_path, "w", encoding="utf-8", newline="") as f_out:
-        w = csv.writer(f_out)
-        w.writerow(["query_id", "doc_id", "relevance"])
-
-        written = 0
-        for (qid, did), rel in rel_map.items():
-            try:
-                rel_f = float(rel)
-            except Exception:
-                rel_f = 0.0
-            if rel_f <= 0.0:
-                continue
-            w.writerow([qid, did, format_relevance(rel_f, score_precision=score_precision)])
-            written += 1
-
-    os.replace(tmp_path, out_path)
-    print(f"Saved qrels -> {out_path} | rows (relevance>0) = {written}")
-
-
 # -----------------------------
-# Core: compute and write qrels (only relevance > 0), reusing existing cache
+# Core: compute and write qrels (only relevance > 0), reusing cache
 # -----------------------------
 def write_all_erag_qrels_csv(
     pairs_by_qid: Dict[str, List[str]],
@@ -429,24 +482,25 @@ def write_all_erag_qrels_csv(
     out_path: str,
     *,
     score_precision: int = 6,
-    existing_rel_map: Optional[Dict[Tuple[str, str], Any]] = None,
+    evaluated_pairs: Optional[Set[Tuple[str, str]]] = None,
+    cached_positive_rel_map: Optional[Dict[Tuple[str, str], Any]] = None,
 ) -> None:
     """
     Esegue generazione+metriche per ogni coppia (qid, docid) in pairs_by_qid,
-    riusando le relevance in existing_rel_map quando presenti, e scrive:
-    - tutte le righe cached (relevance > 0)
-    - tutte le nuove righe con relevance > 0
+    saltando le coppie presenti in evaluated_pairs (cache) e scrivendo:
 
-    Strategia batching:
-    - Iteriamo per “posizione i” nelle liste doc_id (simile all'ID-mode in erag_mod.eval)
-    - Nella stessa iterazione batchiamo solo query_text uniche; duplicati nello stesso batch
-      vengono gestiti uno-a-uno (evita collisioni di chiavi nel dict per il generator).
+    - tutte le coppie cached con relevance > 0 (cached_positive_rel_map)
+    - tutte le nuove coppie con relevance > 0
+
+    Nota:
+    - evaluated_pairs serve a non ricalcolare anche le coppie già valutate con relevance=0.
+    - cached_positive_rel_map viene usato solo per scrivere subito i positivi già noti.
     """
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     tmp_path = out_path + ".tmp"
 
-    existing_rel_map = existing_rel_map or {}
-    existing_keys = set(existing_rel_map.keys())
+    evaluated_pairs = evaluated_pairs or set()
+    cached_positive_rel_map = cached_positive_rel_map or {}
 
     qids = list(pairs_by_qid.keys())
     max_len = max((len(lst) for lst in pairs_by_qid.values()), default=0)
@@ -455,9 +509,9 @@ def write_all_erag_qrels_csv(
         w = csv.writer(f_out)
         w.writerow(["query_id", "doc_id", "relevance"])
 
-        # 1) write cached rows first (only relevance > 0)
+        # 1) write cached positives first
         cached_written = 0
-        for (qid, did), rel in existing_rel_map.items():
+        for (qid, did), rel in cached_positive_rel_map.items():
             try:
                 rel_f = float(rel)
             except Exception:
@@ -467,7 +521,6 @@ def write_all_erag_qrels_csv(
             w.writerow([qid, did, format_relevance(rel_f, score_precision=score_precision)])
             cached_written += 1
 
-        # 2) compute missing pairs
         written_new = 0
         processed_new = 0
 
@@ -480,9 +533,10 @@ def write_all_erag_qrels_csv(
                     continue
 
                 doc_id = str(doc_ids[i])
+                key = (qid, doc_id)
 
-                # cache hit: skip compute
-                if (qid, doc_id) in existing_keys:
+                # cache hit: skip compute (includes relevance=0 already evaluated)
+                if key in evaluated_pairs:
                     continue
 
                 if qid not in query_id_to_query:
@@ -520,7 +574,9 @@ def write_all_erag_qrels_csv(
 
                 scores = downstream_metric_func(generated, batch_expected)
                 if set(scores.keys()) != set(generated.keys()):
-                    raise RuntimeError("The downstream_metric function did not return evaluation scores for all given inputs.")
+                    raise RuntimeError(
+                        "The downstream_metric function did not return evaluation scores for all given inputs."
+                    )
 
                 for qid, qtext, doc_id in backmap:
                     processed_new += 1
@@ -564,7 +620,10 @@ def write_all_erag_qrels_csv(
 # -----------------------------
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Build a single eRAG qrels CSV from <dataset>_all_runs.csv, keeping only relevance>0 pairs (reusing existing qrels as cache).",
+        description=(
+            "Build a single eRAG qrels CSV from <dataset>_all_runs.csv, keeping only relevance>0 pairs, "
+            "reusing cache from existing <dataset>_all_qrels.csv and *_assessed_run.csv."
+        ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
@@ -615,38 +674,56 @@ def main() -> None:
     print(f"Downstream metric: {args.metric}")
 
     # 1) load all_runs pairs
-    pairs_by_qid, _needed_qids_all, _needed_docids_all = load_all_runs_grouped(args.all_runs)
+    pairs_by_qid, needed_qids_all, needed_docids_all = load_all_runs_grouped(args.all_runs)
     if not pairs_by_qid:
         raise RuntimeError("all_runs produced no rows.")
     n_pairs_all = sum(len(v) for v in pairs_by_qid.values())
-    print(f"all_runs loaded: qids={len(pairs_by_qid)}, total_pairs={n_pairs_all}")
+    print(f"all_runs loaded: qids={len(needed_qids_all)}, unique_docids={len(needed_docids_all)}, total_pairs={n_pairs_all}")
 
-    # 2) load existing qrels cache if present in output folder
+    # 2) load caches from output_dir
     dataset_name = infer_dataset_name_from_all_runs_path(args.all_runs)
-    cache_candidate = os.path.join(output_dir, f"{dataset_name}_all_qrels.csv")
+    qrels_cache_path = os.path.join(output_dir, f"{dataset_name}_all_qrels.csv")
 
-    existing_qrels_path: Optional[str] = None
-    if os.path.exists(cache_candidate):
-        existing_qrels_path = cache_candidate
-    elif os.path.exists(out_path):
-        # fallback: se l'output esiste ma non si chiama <dataset>_all_qrels.csv
-        existing_qrels_path = out_path
+    evaluated_pairs: Set[Tuple[str, str]] = set()
+    cached_positive_rel_map: Dict[Tuple[str, str], Any] = {}
 
-    existing_rel_map: Dict[Tuple[str, str], Any] = {}
-    if existing_qrels_path is not None and os.path.exists(existing_qrels_path):
-        existing_rel_map = load_existing_qrels_map(existing_qrels_path)
-        print(f"Loaded existing qrels cache: {existing_qrels_path} -> {len(existing_rel_map)} pairs")
+    # 2.a) existing qrels cache (positives only)
+    if os.path.exists(qrels_cache_path):
+        qrels_pos = load_positive_qrels_map(qrels_cache_path)
+        cached_positive_rel_map.update(qrels_pos)
+        evaluated_pairs |= set(qrels_pos.keys())
+        print(f"Loaded qrels cache: {qrels_cache_path} -> positives={len(qrels_pos)}")
+
+    # 2.b) assessed_run caches (include zeros -> evaluated_pairs)
+    assessed_pairs, assessed_pos, assessed_files = load_assessed_runs_cache(output_dir)
+    if assessed_files > 0:
+        evaluated_pairs |= assessed_pairs
+        # merge positives (max)
+        for k, rel in assessed_pos.items():
+            if k in cached_positive_rel_map:
+                try:
+                    prev = float(cached_positive_rel_map[k])
+                    cur = float(rel)
+                    cached_positive_rel_map[k] = rel if cur > prev else cached_positive_rel_map[k]
+                except Exception:
+                    cached_positive_rel_map[k] = rel
+            else:
+                cached_positive_rel_map[k] = rel
+
+        print(
+            f"Loaded assessed_run cache: folder={output_dir} -> files={assessed_files}, "
+            f"evaluated_pairs={len(assessed_pairs)}, positives={len(assessed_pos)}"
+        )
 
     # 3) determine which pairs still need evaluation (cache miss)
     to_eval_qids: Set[str] = set()
     to_eval_docids: Set[str] = set()
     missing_pairs = 0
 
-    existing_keys = set(existing_rel_map.keys())
     for qid, doc_ids in pairs_by_qid.items():
         for did in doc_ids:
             key = (qid, str(did))
-            if key in existing_keys:
+            if key in evaluated_pairs:
                 continue
             missing_pairs += 1
             to_eval_qids.add(qid)
@@ -654,11 +731,21 @@ def main() -> None:
 
     print(f"Pairs to evaluate (cache miss): {missing_pairs} | cache hits: {n_pairs_all - missing_pairs}")
 
-    # If nothing to compute, just (re)write the cached qrels to output and exit
+    # If nothing to compute, just write cached positives to output (header + relevance>0 rows)
     if missing_pairs == 0:
-        if not existing_rel_map:
-            raise RuntimeError("No pairs to evaluate and no existing qrels cache found.")
-        _write_qrels_map_csv(existing_rel_map, out_path, score_precision=args.score_precision)
+        print("Nothing to evaluate. Writing output from cache only.")
+        write_all_erag_qrels_csv(
+            pairs_by_qid={},  # no new compute
+            query_id_to_query={},
+            doc_id_to_document={},
+            expected_outputs={},
+            text_generator=lambda x: {},
+            downstream_metric_func=lambda a, b: {},
+            out_path=out_path,
+            score_precision=args.score_precision,
+            evaluated_pairs=evaluated_pairs,
+            cached_positive_rel_map=cached_positive_rel_map,
+        )
         return
 
     # 4) dataset -> query_id_to_query + expected_outputs (solo qids da valutare)
@@ -701,7 +788,7 @@ def main() -> None:
         num_beams=args.num_beams,
     )
 
-    # 7) compute relevance and write CSV (only >0), reusing existing_rel_map as cache
+    # 7) compute relevance and write CSV (only >0), skipping cached evaluated pairs
     torch.cuda.empty_cache()
     write_all_erag_qrels_csv(
         pairs_by_qid=pairs_by_qid,
@@ -712,7 +799,8 @@ def main() -> None:
         downstream_metric_func=downstream_metric_func,
         out_path=out_path,
         score_precision=args.score_precision,
-        existing_rel_map=existing_rel_map,
+        evaluated_pairs=evaluated_pairs,
+        cached_positive_rel_map=cached_positive_rel_map,
     )
 
 
