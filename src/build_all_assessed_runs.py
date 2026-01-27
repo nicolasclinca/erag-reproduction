@@ -189,6 +189,10 @@ def main() -> None:
         if os.path.abspath(run_path) == all_qrels_abs:
             continue
 
+        # skip the all_runs file
+        if name.lower().endswith("_all_runs.csv"):
+            continue
+
         # skip already-assessed outputs
         if name.lower().endswith("_assessed_run.csv"):
             continue
