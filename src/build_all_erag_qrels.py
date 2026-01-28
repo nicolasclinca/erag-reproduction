@@ -649,6 +649,7 @@ def main() -> None:
     parser.add_argument("--max_input_len", type=int, default=256)
     parser.add_argument("--max_output_len", type=int, default=64)
     parser.add_argument("--num_beams", type=int, default=4)
+    parser.add_argument("--batch_size", type=int, default=16, help="Batch size per generazione (raggruppando per #docs).")
 
     parser.add_argument("--metric", choices=list(METRICS.keys()), default="em")
     parser.add_argument("--score_precision", type=int, default=6)
@@ -786,6 +787,7 @@ def main() -> None:
         max_input_len=args.max_input_len,
         max_output_len=args.max_output_len,
         num_beams=args.num_beams,
+        batch_size=args.batch_size,
     )
 
     # 7) compute relevance and write CSV (only >0), skipping cached evaluated pairs
