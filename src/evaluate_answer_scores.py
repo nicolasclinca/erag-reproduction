@@ -13,14 +13,12 @@ Retrievers supportati:
       df/N/avgdl dall'indice; tf/dl calcolati sull'answer analizzato con lo stesso analyzer.
 
   - contriever
-      Score = -L2 (più alto = meglio), coerente con contriever_retriever.py quando return_cosine=False.
-      Opzionalmente può simulare anche l'approssimazione dell'indice FAISS IVF+OPQ+PQ:
-        - si applicano i transform della chain (es. OPQ)
-        - si assegna il documento (answer) al centroid più vicino (coarse quantizer)
-        - si PQ-encoda il residual (IVFPQ by_residual) e si ricostruisce un vettore approssimato
-        - si calcola la distanza L2^2 tra query transformata e doc ricostruito
-      In tal caso lo score è -dist2 nello spazio trasformato/quantizzato, più vicino a quello
-      che FAISS restituirebbe per quel doc.
+      Score = -L2^2 (higher=better), coerente con contriever_retriever.py quando return_cosine=False.
+      Opzionalmente può simulare anche IVF+OPQ+PQ (se fornisci --contriever_faiss_index):
+        - applica la chain di transform (es. OPQ) a query/doc
+        - assegna doc alla lista (coarse centroid) più vicina
+        - PQ-encoda e ricostruisce doc approssimato (by_residual supportato)
+        - calcola -||q' - doc_hat||^2
 
   - tct
       inner product tra embedding query e embedding answer (TCT-ColBERT v2, PySerini-style).
@@ -33,11 +31,11 @@ Retrievers supportati:
 
 Esempio:
 python evaluate_answer_scores.py \
-  --datasets ../data/nq-train-kilt.jsonl \
+  --datasets ../data/nq-dev-kilt.jsonl ../data/fever-dev-kilt.jsonl \
   --output ../out/answer_scores.csv \
   --retrievers bm25 contriever tct bge dpr \
   --bm25_index_dir ../indexes/bm25_index \
-  --contriever_faiss_index ./index_out_full/ivfpq_opq_contriever.faiss \
+  --contriever_faiss_index ../indexes/contriever_index/ivfpq_opq_contriever.faiss \
   --overwrite
 """
 
@@ -50,7 +48,7 @@ import csv
 import math
 import argparse
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 from collections import Counter
 
 import numpy as np
@@ -62,7 +60,15 @@ from transformers import BertModel, BertTokenizer  # type: ignore
 
 import faiss  # type: ignore
 from pyserini.search.lucene import LuceneSearcher  # type: ignore
-from pyserini.index.lucene import IndexReader  # type: ignore
+
+# IndexReader import: pyserini cambia path a seconda delle versioni.
+try:
+    from pyserini.index.lucene import IndexReader  # type: ignore
+except Exception:
+    try:
+        from pyserini.index import IndexReader  # type: ignore
+    except Exception:
+        IndexReader = None  # type: ignore
 
 from contriever_encoder import ContrieverEncoder
 from query_encoders import MODEL_BGE, MODEL_TCT, MODEL_DPR_Q
@@ -105,10 +111,7 @@ class DatasetData:
     answers: List[str]       # len = #pairs
 
 
-def load_kilt_query_answers(
-    path: str,
-    max_examples: Optional[int] = None,
-) -> DatasetData:
+def load_kilt_query_answers(path: str, max_examples: Optional[int] = None) -> DatasetData:
     """
     Carica un dataset KILT jsonl e produce:
       - qids[i], queries[i] per record
@@ -182,18 +185,24 @@ class IndexBM25Scorer:
     """
 
     def __init__(self, index_dir: str, k1: float = 0.9, b: float = 0.4):
+        if IndexReader is None:
+            raise ImportError(
+                "IndexReader not available in this pyserini version. "
+                "Install/upgrade pyserini or disable bm25."
+            )
+
         self.index_dir = index_dir
         self.k1 = float(k1)
         self.b = float(b)
 
         self.searcher = LuceneSearcher(index_dir)
-        self.reader = IndexReader(index_dir)
+        self.reader = IndexReader(index_dir)  # type: ignore[operator]
 
         st = self.reader.stats() or {}
         self.N = int(st.get("documents") or 0)
         total_terms = float(st.get("total_terms") or 0.0)
-
         self.avgdl = (total_terms / self.N) if (self.N > 0 and total_terms > 0) else 1.0
+
         self._df_cache: Dict[str, int] = {}
 
         if self.N <= 0:
@@ -205,32 +214,41 @@ class IndexBM25Scorer:
         except Exception:
             return []
 
-    def _df(self, term: str) -> int:
-        term = str(term)
-        v = self._df_cache.get(term)
-        if v is not None:
-            return v
+    def _get_term_counts(self, term: str) -> int:
+        """
+        Ritorna df(term) dal corpus indicizzato (best effort across pyserini versions).
+        """
+        t = str(term)
+        cached = self._df_cache.get(t)
+        if cached is not None:
+            return cached
+
+        df = 0
         try:
-            df, _cf = self.reader.get_term_counts(term)
+            # spesso: (df, cf)
+            df, _cf = self.reader.get_term_counts(t)
             df = int(df or 0)
+        except TypeError:
+            # alcune versioni accettano analyzer=
+            try:
+                df, _cf = self.reader.get_term_counts(t, analyzer=None)
+                df = int(df or 0)
+            except Exception:
+                df = 0
         except Exception:
             df = 0
-        self._df_cache[term] = df
-        return df
+
+        self._df_cache[t] = int(df)
+        return int(df)
 
     def _idf(self, df: int) -> float:
         if df <= 0:
             return 0.0
         return math.log(1.0 + (self.N - df + 0.5) / (df + 0.5))
 
-    def score_from_analyzed(
-        self,
-        qtf: Counter,
-        doc_terms: List[str],
-    ) -> float:
+    def score_from_analyzed(self, qtf: Counter, doc_terms: List[str]) -> float:
         if not qtf:
             return 0.0
-
         tf = Counter(doc_terms)
         dl = float(len(doc_terms))
         if dl <= 0.0:
@@ -238,7 +256,7 @@ class IndexBM25Scorer:
 
         score = 0.0
         for t, qf in qtf.items():
-            df = self._df(t)
+            df = self._get_term_counts(t)
             if df <= 0:
                 continue
             idf = self._idf(df)
@@ -254,19 +272,43 @@ class IndexBM25Scorer:
 
 
 # -----------------------------
-# Contriever: -L2 scoring, optional IVF+OPQ+PQ simulation
+# Contriever: -L2^2 scoring, optional IVF+OPQ+PQ simulation
 # -----------------------------
-def _unwrap_faiss_index(index: faiss.Index) -> faiss.Index:
+def _faiss_downcast_index(index: faiss.Index) -> faiss.Index:
     """
-    Unwrap IDMap/IDMap2 if present.
+    faiss.read_index spesso ritorna un tipo base (faiss.Index). downcast_index lo specializza.
     """
-    core = index
     try:
-        if isinstance(core, (faiss.IndexIDMap, faiss.IndexIDMap2)) and hasattr(core, "index"):
-            core = core.index
+        if hasattr(faiss, "downcast_index"):
+            return faiss.downcast_index(index)
+    except Exception:
+        pass
+    return index
+
+
+def _faiss_unwrap_idmap(index: faiss.Index) -> faiss.Index:
+    core = _faiss_downcast_index(index)
+    try:
+        while isinstance(core, (faiss.IndexIDMap, faiss.IndexIDMap2)) and hasattr(core, "index"):
+            core = _faiss_downcast_index(core.index)
     except Exception:
         pass
     return core
+
+
+def _faiss_extract_ivf(index: faiss.Index) -> Optional[faiss.IndexIVF]:
+    """
+    Estrae la parte IVF se possibile (best effort).
+    """
+    idx = _faiss_downcast_index(index)
+    try:
+        if hasattr(faiss, "extract_index_ivf"):
+            ivf = faiss.extract_index_ivf(idx)
+            ivf = _faiss_downcast_index(ivf)
+            return ivf  # type: ignore[return-value]
+    except Exception:
+        return None
+    return None
 
 
 class ContrieverIvfOpqPqScorer:
@@ -280,38 +322,60 @@ class ContrieverIvfOpqPqScorer:
          altrimenti PQ-encoda direttamente doc
       4) dist2 = ||q' - doc_approx||^2
       5) score = -dist2
+
+    Nota: questa è una simulazione "standalone" (non usa nprobe né ricerca top-k).
     """
 
     def __init__(self, index_path: str):
         self.index_path = index_path
-        self.index = faiss.read_index(index_path)
-        self.index = _unwrap_faiss_index(self.index)
+
+        idx = faiss.read_index(index_path)
+        idx = _faiss_unwrap_idmap(idx)
+        idx = _faiss_downcast_index(idx)
 
         self.pre: Optional[faiss.IndexPreTransform] = None
-        self.core: faiss.Index = self.index
+        core: faiss.Index = idx
 
-        if isinstance(self.core, faiss.IndexPreTransform) and hasattr(self.core, "index"):
-            self.pre = self.core
-            self.core = _unwrap_faiss_index(self.pre.index)
+        # Unwrap PreTransform (OPQ, ecc.)
+        try:
+            if isinstance(core, faiss.IndexPreTransform) and hasattr(core, "index"):
+                self.pre = core
+                core = _faiss_unwrap_idmap(core.index)
+                core = _faiss_downcast_index(core)
+        except Exception:
+            self.pre = None
 
-        if not isinstance(self.core, faiss.IndexIVFPQ):
+        # Estrai IVF e verifica che sia IVFPQ
+        ivf = _faiss_extract_ivf(core)
+        if ivf is None:
+            core_dc = _faiss_downcast_index(core)
+            # può già essere IVFPQ ma extract non disponibile
+            if isinstance(core_dc, faiss.IndexIVFPQ):
+                ivf = core_dc  # type: ignore[assignment]
+            else:
+                raise RuntimeError(
+                    "ContrieverIvfOpqPqScorer expects an IVF index (IndexIVFPQ). "
+                    f"Got: {type(core_dc)} from {index_path}"
+                )
+
+        ivf = _faiss_downcast_index(ivf)
+        if not isinstance(ivf, faiss.IndexIVFPQ):
             raise RuntimeError(
-                "ContrieverIvfOpqPqScorer expects an IndexIVFPQ (possibly wrapped by IndexPreTransform). "
-                f"Got: {type(self.core)} from {index_path}"
+                "ContrieverIvfOpqPqScorer expects IndexIVFPQ. "
+                f"Got: {type(ivf)} from {index_path}"
             )
 
-        self.ivfpq: faiss.IndexIVFPQ = self.core
+        self.ivfpq: faiss.IndexIVFPQ = ivf
         self.d = int(getattr(self.ivfpq, "d", 0) or 0)
         if self.d <= 0:
             raise RuntimeError("Invalid FAISS index dimension.")
 
         self.by_residual = bool(getattr(self.ivfpq, "by_residual", True))
-        self.quantizer = getattr(self.ivfpq, "quantizer", None)
+        self.quantizer = _faiss_downcast_index(getattr(self.ivfpq, "quantizer", None))
         self.pq = getattr(self.ivfpq, "pq", None)
         if self.quantizer is None or self.pq is None:
             raise RuntimeError("IndexIVFPQ missing quantizer/pq attributes.")
 
-        # cache centroids by list id (best effort; dataset answers di solito non toccano tutte le liste)
         self._centroid_cache: Dict[int, np.ndarray] = {}
 
     def transform(self, x: np.ndarray) -> np.ndarray:
@@ -323,19 +387,28 @@ class ContrieverIvfOpqPqScorer:
         if self.pre is None:
             return X
 
+        # Best effort: applica self.pre.chain.at(i).apply_py
         try:
             chain = getattr(self.pre, "chain", None)
             if chain is None:
                 return X
-            # chain.size(), chain.at(i)
-            size = int(chain.size())
+
+            # VectorTransformVector: size() e at(i)
+            size = None
+            if hasattr(chain, "size"):
+                size = int(chain.size())
+            elif hasattr(chain, "__len__"):
+                size = int(len(chain))  # type: ignore[arg-type]
+
+            if size is None:
+                return X
+
             for i in range(size):
                 vt = chain.at(i)
-                # apply_py: (n, d) -> (n, d)
-                X = vt.apply_py(X)
+                X = vt.apply_py(np.ascontiguousarray(X, dtype=np.float32))
             return np.ascontiguousarray(X.astype(np.float32, copy=False))
         except Exception:
-            # fallback: niente transform
+            # fallback: nessun transform
             return X
 
     def _get_centroids(self, list_ids: np.ndarray) -> np.ndarray:
@@ -346,24 +419,23 @@ class ContrieverIvfOpqPqScorer:
         B = int(list_ids.shape[0])
         C = np.empty((B, self.d), dtype=np.float32)
 
-        # fetch unique ids, reconstruct once each
         uniq = list(dict.fromkeys([int(x) for x in list_ids.tolist() if int(x) >= 0]))
         missing = [lid for lid in uniq if lid not in self._centroid_cache]
 
         for lid in missing:
             try:
                 c = self.quantizer.reconstruct(int(lid))
-                c = np.asarray(c, dtype=np.float32)
-                if c.ndim == 1:
-                    self._centroid_cache[lid] = c
-                else:
-                    self._centroid_cache[lid] = c.reshape(-1).astype(np.float32, copy=False)
+                c = np.asarray(c, dtype=np.float32).reshape(-1)
+                if c.shape[0] != self.d:
+                    c = np.zeros((self.d,), dtype=np.float32)
+                self._centroid_cache[lid] = c
             except Exception:
                 self._centroid_cache[lid] = np.zeros((self.d,), dtype=np.float32)
 
+        z = np.zeros((self.d,), dtype=np.float32)
         for i in range(B):
             lid = int(list_ids[i])
-            C[i] = self._centroid_cache.get(lid, np.zeros((self.d,), dtype=np.float32))
+            C[i] = self._centroid_cache.get(lid, z)
 
         return C
 
@@ -380,22 +452,21 @@ class ContrieverIvfOpqPqScorer:
 
         if self.by_residual:
             centroids = self._get_centroids(list_ids)  # (B, d)
-            residual = Xd - centroids
-            codes = self.pq.compute_codes(np.ascontiguousarray(residual, dtype=np.float32))
+            residual = np.ascontiguousarray((Xd - centroids).astype(np.float32, copy=False))
+            codes = self.pq.compute_codes(residual)
             residual_hat = self.pq.decode(codes)
             residual_hat = np.ascontiguousarray(residual_hat.astype(np.float32, copy=False))
             return centroids + residual_hat
 
-        # non residual: PQ su vettore diretto
         codes = self.pq.compute_codes(Xd)
         Xhat = self.pq.decode(codes)
         return np.ascontiguousarray(Xhat.astype(np.float32, copy=False))
 
     @staticmethod
-    def neg_l2_scores(Q_t: np.ndarray, X_hat: np.ndarray) -> np.ndarray:
+    def neg_l2sq_scores(Q_t: np.ndarray, X_hat: np.ndarray) -> np.ndarray:
         """
         Q_t e X_hat: (B, d) float32
-        ritorna score: -||Q - X||^2
+        ritorna score: -||Q - X||^2 (distanza L2 al quadrato)
         """
         diff = Q_t - X_hat
         dist2 = np.sum(diff * diff, axis=1).astype(np.float32)
@@ -474,13 +545,7 @@ class _HFClsEncoder:
 
 
 class _DprQEncoder:
-    def __init__(
-        self,
-        model_name: str,
-        device: torch.device,
-        max_length: int = 256,
-        amp_dtype: torch.dtype = torch.float16,
-    ):
+    def __init__(self, model_name: str, device: torch.device, max_length: int = 256, amp_dtype: torch.dtype = torch.float16):
         self.device = device
         self.max_length = int(max_length)
         self.amp_dtype = amp_dtype
@@ -488,7 +553,6 @@ class _DprQEncoder:
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
         self.model = DPRQuestionEncoder.from_pretrained(model_name).to(self.device)
         self.model.eval()
-
         self.D = int(self.model.config.hidden_size)
 
         torch.backends.cuda.matmul.allow_tf32 = True
@@ -504,38 +568,21 @@ class _DprQEncoder:
 
         bs = max(1, int(batch_size))
         chunks: List[np.ndarray] = []
-
         for i in range(0, len(texts), bs):
             batch = texts[i : i + bs]
-            enc = self.tokenizer(
-                batch,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=self.max_length,
-            )
+            enc = self.tokenizer(batch, return_tensors="pt", padding=True, truncation=True, max_length=self.max_length)
             enc = {k: v.to(self.device) for k, v in enc.items()}
-
             if self.device.type == "cuda":
                 with torch.amp.autocast(device_type="cuda", dtype=self.amp_dtype):
                     out = self.model(**enc)
             else:
                 out = self.model(**enc)
-
-            x = out.pooler_output.float()
-            chunks.append(x.cpu().numpy().astype(np.float32, copy=False))
-
+            chunks.append(out.pooler_output.float().cpu().numpy().astype(np.float32, copy=False))
         return np.vstack(chunks)
 
 
 class _DprCtxEncoder:
-    def __init__(
-        self,
-        model_name: str,
-        device: torch.device,
-        max_length: int = 256,
-        amp_dtype: torch.dtype = torch.float16,
-    ):
+    def __init__(self, model_name: str, device: torch.device, max_length: int = 256, amp_dtype: torch.dtype = torch.float16):
         self.device = device
         self.max_length = int(max_length)
         self.amp_dtype = amp_dtype
@@ -543,7 +590,6 @@ class _DprCtxEncoder:
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
         self.model = DPRContextEncoder.from_pretrained(model_name).to(self.device)
         self.model.eval()
-
         self.D = int(self.model.config.hidden_size)
 
         torch.backends.cuda.matmul.allow_tf32 = True
@@ -559,27 +605,16 @@ class _DprCtxEncoder:
 
         bs = max(1, int(batch_size))
         chunks: List[np.ndarray] = []
-
         for i in range(0, len(texts), bs):
             batch = texts[i : i + bs]
-            enc = self.tokenizer(
-                batch,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=self.max_length,
-            )
+            enc = self.tokenizer(batch, return_tensors="pt", padding=True, truncation=True, max_length=self.max_length)
             enc = {k: v.to(self.device) for k, v in enc.items()}
-
             if self.device.type == "cuda":
                 with torch.amp.autocast(device_type="cuda", dtype=self.amp_dtype):
                     out = self.model(**enc)
             else:
                 out = self.model(**enc)
-
-            x = out.pooler_output.float()
-            chunks.append(x.cpu().numpy().astype(np.float32, copy=False))
-
+            chunks.append(out.pooler_output.float().cpu().numpy().astype(np.float32, copy=False))
         return np.vstack(chunks)
 
 
@@ -592,13 +627,7 @@ class _TctColBertEncoder:
     - embedding: mean(last_hidden_state[:, 4:, :], dim=1)
     """
 
-    def __init__(
-        self,
-        model_name: str,
-        role: str,
-        device: torch.device,
-        amp_dtype: torch.dtype = torch.float16,
-    ):
+    def __init__(self, model_name: str, role: str, device: torch.device, amp_dtype: torch.dtype = torch.float16):
         self.device = device
         self.role = str(role).strip().upper()
         if self.role not in ("Q", "D"):
@@ -626,20 +655,13 @@ class _TctColBertEncoder:
 
         bs = max(1, int(batch_size))
         chunks: List[np.ndarray] = []
-
         prefix = f"[CLS] [{self.role}] "
 
         for i in range(0, len(texts), bs):
             batch = texts[i : i + bs]
             inp = [(prefix + t + self._mask_suffix) for t in batch]
 
-            enc = self.tokenizer(
-                inp,
-                return_tensors="pt",
-                truncation=True,
-                max_length=self.max_length,
-                add_special_tokens=False,
-            )
+            enc = self.tokenizer(inp, return_tensors="pt", truncation=True, max_length=self.max_length, add_special_tokens=False)
             enc = {k: v.to(self.device) for k, v in enc.items()}
 
             if self.device.type == "cuda":
@@ -661,13 +683,12 @@ def _write_dense_scores(
     writer: csv.writer,
     dataset: DatasetData,
     retriever_name: str,
-    query_emb: np.ndarray,          # (num_queries, D)
-    doc_encoder,                    # .encode(List[str], batch_size) -> np.ndarray (B, D)
+    query_emb: np.ndarray,
+    doc_encoder,
     batch_size: int,
     score_precision: int,
 ) -> None:
     fmt = f"{{:.{int(score_precision)}f}}"
-
     answers = dataset.answers
     pair_qidx = dataset.pair_qidx
     qids = dataset.qids
@@ -676,20 +697,14 @@ def _write_dense_scores(
         a_batch = answers[i : i + batch_size]
         qidx_batch = pair_qidx[i : i + batch_size]
 
-        A = doc_encoder.encode(a_batch, batch_size=batch_size)  # (B, D)
-        Q = query_emb[np.array(qidx_batch, dtype=np.int64)]      # (B, D)
+        A = doc_encoder.encode(a_batch, batch_size=batch_size)
+        Q = query_emb[np.array(qidx_batch, dtype=np.int64)]
 
         scores = np.sum(Q * A, axis=1).astype(np.float32)
 
         for j in range(len(a_batch)):
             qidx = int(qidx_batch[j])
-            writer.writerow([
-                dataset.name,
-                qids[qidx],
-                a_batch[j],
-                fmt.format(float(scores[j])),
-                retriever_name,
-            ])
+            writer.writerow([dataset.name, qids[qidx], a_batch[j], fmt.format(float(scores[j])), retriever_name])
 
 
 def _write_bm25_scores_with_index_stats(
@@ -700,72 +715,60 @@ def _write_bm25_scores_with_index_stats(
 ) -> None:
     fmt = f"{{:.{int(score_precision)}f}}"
     qids = dataset.qids
-    queries = dataset.queries
 
     # pre-analizza le query una volta sola
     q_qtf: List[Counter] = []
-    for q in queries:
-        q_terms = bm25.analyze(q)
-        q_qtf.append(Counter(q_terms))
+    for q in dataset.queries:
+        q_qtf.append(Counter(bm25.analyze(q)))
 
     for qidx, ans in zip(dataset.pair_qidx, dataset.answers):
         qidx_i = int(qidx)
         doc_terms = bm25.analyze(ans)
         s = bm25.score_from_analyzed(q_qtf[qidx_i], doc_terms)
-
-        writer.writerow([
-            dataset.name,
-            qids[qidx_i],
-            ans,
-            fmt.format(float(s)),
-            "bm25",
-        ])
+        writer.writerow([dataset.name, qids[qidx_i], ans, fmt.format(float(s)), "bm25"])
 
 
-def _write_contriever_neg_l2_scores(
+def _write_contriever_neg_l2sq_scores(
     writer: csv.writer,
     dataset: DatasetData,
     contriever: ContrieverEncoder,
-    batch_size: int,
+    answer_batch_size: int,
+    query_batch_size: int,
     score_precision: int,
     faiss_scorer: Optional[ContrieverIvfOpqPqScorer] = None,
 ) -> None:
     """
-    contriever: encoder (ritorna embedding normalizzati)
-    score: -L2^2
+    Score = -L2^2 (higher=better).
 
     Se faiss_scorer non è None:
       - applica transform (OPQ) alle query e ai doc
       - ricostruisce doc approssimato via IVFPQ (PQ su residual)
-      - score = -||q' - doc_hat||^2  (simulazione più vicina all'indice IVF+OPQ+PQ)
+      - score = -||q' - doc_hat||^2
     """
     fmt = f"{{:.{int(score_precision)}f}}"
     qids = dataset.qids
 
-    Q = contriever.encode(dataset.queries, batch_size=max(1, int(batch_size))).astype(np.float32, copy=False)
-    if faiss_scorer is not None:
-        Q_t = faiss_scorer.transform(Q)
-        if Q_t.shape[1] != faiss_scorer.d:
-            raise RuntimeError(
-                f"Contriever FAISS dim mismatch: Q_t dim={Q_t.shape[1]} vs index_dim={faiss_scorer.d}"
-            )
-    else:
-        Q_t = Q
+    Q = contriever.encode(dataset.queries, batch_size=max(1, int(query_batch_size))).astype(np.float32, copy=False)
+    Q_t = faiss_scorer.transform(Q) if faiss_scorer is not None else Q
+
+    if faiss_scorer is not None and int(Q_t.shape[1]) != int(faiss_scorer.d):
+        raise RuntimeError(f"Contriever FAISS dim mismatch: Q_t dim={Q_t.shape[1]} vs index_dim={faiss_scorer.d}")
 
     answers = dataset.answers
     pair_qidx = dataset.pair_qidx
 
-    for i in range(0, len(answers), batch_size):
-        a_batch = answers[i : i + batch_size]
-        qidx_batch = pair_qidx[i : i + batch_size]
+    bs = max(1, int(answer_batch_size))
+    for i in range(0, len(answers), bs):
+        a_batch = answers[i : i + bs]
+        qidx_batch = pair_qidx[i : i + bs]
 
-        A = contriever.encode(a_batch, batch_size=max(1, int(batch_size))).astype(np.float32, copy=False)
+        A = contriever.encode(a_batch, batch_size=bs).astype(np.float32, copy=False)
         Q_sel = Q_t[np.array(qidx_batch, dtype=np.int64)]
 
         if faiss_scorer is not None:
             A_t = faiss_scorer.transform(A)
             A_hat = faiss_scorer.reconstruct_doc_approx(A_t)
-            scores = faiss_scorer.neg_l2_scores(Q_sel, A_hat)
+            scores = faiss_scorer.neg_l2sq_scores(Q_sel, A_hat)
         else:
             diff = Q_sel - A
             dist2 = np.sum(diff * diff, axis=1).astype(np.float32)
@@ -773,13 +776,7 @@ def _write_contriever_neg_l2_scores(
 
         for j in range(len(a_batch)):
             qidx = int(qidx_batch[j])
-            writer.writerow([
-                dataset.name,
-                qids[qidx],
-                a_batch[j],
-                fmt.format(float(scores[j])),
-                "contriever",
-            ])
+            writer.writerow([dataset.name, qids[qidx], a_batch[j], fmt.format(float(scores[j])), "contriever"])
 
 
 # -----------------------------
@@ -821,7 +818,7 @@ def main() -> None:
         "--contriever_faiss_index",
         type=str,
         default=None,
-        help="Path indice FAISS (IVF+OPQ+PQ) per simulare anche la quantizzazione nello score contriever (-L2).",
+        help="Path indice FAISS (IVF+OPQ+PQ) per simulare anche la quantizzazione nello score contriever (-L2^2).",
     )
 
     args = parser.parse_args()
@@ -859,26 +856,17 @@ def main() -> None:
         # --- BM25 (index stats)
         if "bm25" in selected:
             print(f"[bm25] loading index stats from: {args.bm25_index_dir}")
-            bm25 = IndexBM25Scorer(
-                index_dir=args.bm25_index_dir,
-                k1=args.bm25_k1,
-                b=args.bm25_b,
-            )
+            bm25 = IndexBM25Scorer(index_dir=args.bm25_index_dir, k1=args.bm25_k1, b=args.bm25_b)
             print(f"[bm25] N={bm25.N} avgdl={bm25.avgdl:.4f}")
 
             for ds in datasets:
                 print(f"[bm25] scoring pairs for dataset={ds.name} ...")
-                _write_bm25_scores_with_index_stats(
-                    writer=writer,
-                    dataset=ds,
-                    bm25=bm25,
-                    score_precision=args.score_precision,
-                )
+                _write_bm25_scores_with_index_stats(writer, ds, bm25, score_precision=args.score_precision)
 
             del bm25
             gc.collect()
 
-        # --- Contriever (-L2), optional IVF+OPQ+PQ simulation
+        # --- Contriever (-L2^2), optional IVF+OPQ+PQ simulation
         if "contriever" in selected:
             faiss_scorer: Optional[ContrieverIvfOpqPqScorer] = None
             if args.contriever_faiss_index:
@@ -890,12 +878,13 @@ def main() -> None:
             contr = ContrieverEncoder(device=device)
 
             for ds in datasets:
-                print(f"[contriever] scoring (-L2) dataset={ds.name} ...")
-                _write_contriever_neg_l2_scores(
+                print(f"[contriever] scoring (-L2^2) dataset={ds.name} ...")
+                _write_contriever_neg_l2sq_scores(
                     writer=writer,
                     dataset=ds,
                     contriever=contr,
-                    batch_size=args.batch_size,
+                    answer_batch_size=args.batch_size,
+                    query_batch_size=args.query_batch_size,
                     score_precision=args.score_precision,
                     faiss_scorer=faiss_scorer,
                 )
@@ -909,6 +898,7 @@ def main() -> None:
             print("[tct] loading model ...")
             tct_q = _TctColBertEncoder(model_name=MODEL_TCT, role="Q", device=device)
             tct_d = _TctColBertEncoder(model_name=MODEL_TCT, role="D", device=device)
+
             for ds in datasets:
                 print(f"[tct] encoding queries dataset={ds.name} ...")
                 Q = tct_q.encode(ds.queries, batch_size=args.query_batch_size)
@@ -922,6 +912,7 @@ def main() -> None:
                     batch_size=args.batch_size,
                     score_precision=args.score_precision,
                 )
+
             del tct_q, tct_d
             gc.collect()
             _safe_empty_cuda_cache()
@@ -929,12 +920,8 @@ def main() -> None:
         # --- BGE
         if "bge" in selected:
             print("[bge] loading model ...")
-            bge = _HFClsEncoder(
-                model_name=MODEL_BGE,
-                device=device,
-                max_length=args.max_length,
-                normalize=True,
-            )
+            bge = _HFClsEncoder(model_name=MODEL_BGE, device=device, max_length=args.max_length, normalize=True)
+
             for ds in datasets:
                 print(f"[bge] encoding queries dataset={ds.name} ...")
                 Q = bge.encode(ds.queries, batch_size=args.query_batch_size)
@@ -948,6 +935,7 @@ def main() -> None:
                     batch_size=args.batch_size,
                     score_precision=args.score_precision,
                 )
+
             del bge
             gc.collect()
             _safe_empty_cuda_cache()
@@ -955,16 +943,9 @@ def main() -> None:
         # --- DPR
         if "dpr" in selected:
             print("[dpr] loading models ...")
-            dpr_q = _DprQEncoder(
-                model_name=MODEL_DPR_Q,
-                device=device,
-                max_length=args.max_length,
-            )
-            dpr_d = _DprCtxEncoder(
-                model_name=MODEL_DPR_CTX,
-                device=device,
-                max_length=args.max_length,
-            )
+            dpr_q = _DprQEncoder(model_name=MODEL_DPR_Q, device=device, max_length=args.max_length)
+            dpr_d = _DprCtxEncoder(model_name=MODEL_DPR_CTX, device=device, max_length=args.max_length)
+
             for ds in datasets:
                 print(f"[dpr] encoding queries dataset={ds.name} ...")
                 Q = dpr_q.encode(ds.queries, batch_size=args.query_batch_size)
@@ -978,6 +959,7 @@ def main() -> None:
                     batch_size=args.batch_size,
                     score_precision=args.score_precision,
                 )
+
             del dpr_q, dpr_d
             gc.collect()
             _safe_empty_cuda_cache()
