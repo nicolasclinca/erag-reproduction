@@ -60,15 +60,7 @@ from transformers import BertModel, BertTokenizer  # type: ignore
 
 import faiss  # type: ignore
 from pyserini.search.lucene import LuceneSearcher  # type: ignore
-
-# IndexReader import: pyserini cambia path a seconda delle versioni.
-try:
-    from pyserini.index.lucene import IndexReader  # type: ignore
-except Exception:
-    try:
-        from pyserini.index import IndexReader  # type: ignore
-    except Exception:
-        IndexReader = None  # type: ignore
+from pyserini.index.lucene import LuceneIndexReader as IndexReader  # type: ignore
 
 from contriever_encoder import ContrieverEncoder
 from query_encoders import MODEL_BGE, MODEL_TCT, MODEL_DPR_Q
