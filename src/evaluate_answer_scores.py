@@ -62,7 +62,7 @@ from transformers import BertModel, BertTokenizer  # type: ignore
 
 import faiss  # type: ignore
 from pyserini.search.lucene import LuceneSearcher  # type: ignore
-from pyserini.index.lucene import IndexReader  # type: ignore
+from pyserini.index import IndexReader  # type: ignore
 
 from contriever_encoder import ContrieverEncoder
 from query_encoders import MODEL_BGE, MODEL_TCT, MODEL_DPR_Q
