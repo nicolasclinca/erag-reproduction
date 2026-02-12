@@ -1,57 +1,36 @@
-# eRAG_v1.0
+# «Quis Aestimabit Ipsas Aestimationes?»: A Reproducibility and Benchmarking Study for RAG Evaluation Methods in Information Retrieval Systems
 
-## Links
-KILT Benchmark: https://github.com/facebookresearch/KILT/tree/main <br>
-eRAG: https://github.com/alirezasalemi7/eRAG/tree/main <br>
+This repository contains the code for the SIGIR ’26 paper titled **«Quis Aestimabit Ipsas Aestimationes?»: A Reproducibility and Benchmarking Study for RAG Evaluation Methods in Information Retrieval Systems**.[LINK PAPER]
 
 
-## 1. Clone the repository
-```bash
-git clone https://github.com/nicolasclinca/eRAG.git 
-```
+Retrieval-Augmented Generation (RAG) systems combine a **retriever**, which selects documents from an external knowledge source (e.g., Wikipedia), and a **generator** (LLM), which produces an answer conditioned on the query and the retrieved documents. Accurately evaluating RAG systems, and in particular **isolating the retriever’s contribution**, is challenging.
 
-## 2. Create these directories
-Enter the eRAG project directory(cd eRAG) and create these directory. The data directory must contain all the datasets
-```bash
-mkdir -p data/collection, indexes/bm25_index, indexes/faiss_index, models, logs
-```
+Among recent proposals, **eRAG** (Salemi & Zamani, SIGIR ’24) assigns a score to each retrieved document by running the generator **document-by-document**: the generator answers using the query and a single retrieved document, the output is scored with the downstream metric against the ground truth, and these per-document scores are then aggregated using standard IR-style metrics. While the original study reports strong correlation with end-to-end RAG performance and efficiency advantages, incorporating LLMs into evaluation raises concerns regarding **reproducibility, replicability, and generalizability**.
 
-## Download the NQ dataset (e.g., the dev file)
-```bash 
-wget -O data/nq-dev-kilt.jsonl http://dl.fbaipublicfiles.com/KILT/nq-dev-kilt.jsonl
-wget -O data/nq-train-kilt.jsonl http://dl.fbaipublicfiles.com/KILT/nq-train-kilt.jsonl
-wget -O data/nq-test_without_answers-kilt.jsonl http://dl.fbaipublicfiles.com/KILT/nq-test_without_answers-kilt.jsonl
-```
+This codebase provides (i) a complete pipeline to reproduce the core eRAG experimental setting, and (ii) a benchmarking extension to analyze eRAG behavior across additional retrievers and (iii) to assess its ability to rank retrievers according to end-to-end RAG performance, as discussed in the paper. [LINK PAPER]
 
-## Download the Wikipedia Dump
-```bash
-wget -O data/wikipedia_dump.jsonl http://dl.fbaipublicfiles.com/KILT/kilt_knowledgesource.json
-```
+## What this repository provides
 
-## 3. Create a conda environment
+- Wikipedia (knowledge source) preprocessing into a **passage collection**.
+- Indexing and retrieval (sparse and/or dense, depending on the configuration available in this repository).
+- Generation and evaluation:
+  - **eRAG**: per-document scoring followed by aggregation into IR-style metrics.
+  - **End-to-end RAG**: generation with top-*k* documents and downstream scoring.
+- Utilities for analysis and comparison (e.g., correlation between aggregated eRAG scores and end-to-end performance; system-level analysis where available).
+
+## Repository layout (indicative)
+
+- `environment.yml`: recommended Conda environment
+- `src/`: main code (preprocess, indexing, retrieval, eRAG, end-to-end, evaluation)
+- `data/`: datasets and collection
+- `indexing.sh`: indexing helper 
+- `logs/`: scoring and evaluation outputs
+
+## Documentation
+
+### Environment (recommended)
+
 ```bash
 conda env create -f environment.yml
+conda activate <ENV_NAME>
 ```
-Activate the environment
-```bash
-conda activate nome_ambiente
-```
-
-## 4. How to execute the code
-1. Execute "preprocess_wikipedia.py" file
-```bash
-python preprocess_wikipedia.py
-```
-2. For Pyserini BM25 index run this code:
-```bash
-python -m pyserini.index.lucene -collection JsonCollection -input ../data/collection -index ../indexes/bm25_index -generator DefaultLuceneDocumentGenerator -threads 8 -storePositions -storeDocvectors -storeRaw
-```
-Execute "build_indexes.py" file. It contains the code for Contriever (MEGLIO NON AVVIARLO, CONTRIEVER E' DA RIVEDERE) <br>
-3. Execute "retrieval_models.py" file <br>
-3.1 (Optional) Execute "gemini.py" file, it needs your gemini api key <br>
-4. Execute "data_loader.py" file <br>
-5. Execute "train.py" file. Use the flag --h for help (change parameters) <br>
-```bash
-python train.py --h
-```
-6. Execute "evaluation.py" file. Use the flag --h for help (change parameters) <br> 
