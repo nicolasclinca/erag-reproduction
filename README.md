@@ -289,4 +289,4 @@ python src/evaluate_correlations.py \
 
 If you use this repository, please cite:
 - our SIGIR’26 paper [LINK PAPER]
-- eRAG (Salemi & Zamani, SIGIR ’24) [LINK PAPER]
+- eRAG (Salemi & Zamani, SIGIR ’24): https://github.com/alirezasalemi7/eRAG
