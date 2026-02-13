@@ -12,11 +12,11 @@ This codebase provides (i) a complete pipeline to reproduce the core eRAG experi
 ## What this repository provides
 
 - Wikipedia (knowledge source) preprocessing into a **passage collection**.
-- Indexing and retrieval (sparse and/or dense, depending on the configuration available in this repository).
+- Indexing and retrieval (sparse or dense, depending on the configuration).
 - Generation and evaluation:
   - **eRAG**: per-document scoring followed by aggregation into IR-style metrics.
   - **End-to-end RAG**: generation with top-*k* documents and downstream scoring.
-- Utilities for analysis and comparison (e.g., correlation between aggregated eRAG scores and end-to-end performance; system-level analysis where available).
+- Utilities for analysis and comparison (e.g., correlation between aggregated eRAG scores and end-to-end performance; system-level analysis).
 
 ## Repository layout (indicative)
 
