@@ -32,8 +32,6 @@ import csv
 import argparse
 from typing import Dict, Iterator, List, Optional, Set, Tuple
 
-from build_qrels import load_kilt_gold_wikipedia_ids, wikipedia_id_from_doc_id
-
 
 # -----------------------------
 # Collection parsing
@@ -58,6 +56,104 @@ def iter_collection_doc_ids(collection_path: str, max_docs: Optional[int] = None
             did = (rec.get("id") or rec.get("doc_id") or "").strip()
             if did:
                 yield str(did)
+
+
+# -----------------------------
+# KILT gold loading (qid -> set(wikipedia_id))
+# -----------------------------
+def load_kilt_gold_wikipedia_ids_from_file(
+    path: str,
+    max_examples: Optional[int] = None,
+    qid_prefix: Optional[str] = None,
+) -> Dict[str, Set[str]]:
+    """
+    Returns: {query_id: set_of_gold_wikipedia_ids}
+
+    query_id:
+      - record["id"] if present, otherwise the row index
+      - if qid_prefix is provided: f"{qid_prefix}:{qid}"
+    """
+    gold: Dict[str, Set[str]] = {}
+
+    with open(path, "r", encoding="utf-8") as f:
+        for i, line in enumerate(f):
+            if max_examples is not None and i >= max_examples:
+                break
+            line = line.strip()
+            if not line:
+                continue
+
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue
+
+            qid = str(rec.get("id", i))
+            if qid_prefix:
+                qid = f"{qid_prefix}:{qid}"
+
+            wiki_ids: Set[str] = set()
+            outputs = rec.get("output") or []
+            if isinstance(outputs, list):
+                for out in outputs:
+                    provs = (out or {}).get("provenance") or []
+                    if not isinstance(provs, list):
+                        continue
+                    for p in provs:
+                        wid = (p or {}).get("wikipedia_id", None)
+                        if wid is None:
+                            continue
+                        wiki_ids.add(str(wid))
+
+            gold[qid] = wiki_ids
+
+    return gold
+
+
+def load_kilt_gold_wikipedia_ids(
+    datasets: List[str],
+    max_examples: Optional[int] = None,
+    prefix_with_dataset: bool = True,
+) -> Dict[str, Set[str]]:
+    """
+    Loads qid->gold_wikipedia_ids from a list of datasets.
+    If multiple datasets and prefix_with_dataset=True, prefixes qid with the basename to avoid collisions.
+    """
+    if not datasets:
+        return {}
+
+    multi = len(datasets) > 1
+    merged: Dict[str, Set[str]] = {}
+
+    for p in datasets:
+        if not os.path.exists(p):
+            raise FileNotFoundError(f"Dataset not found: {p}")
+
+        prefix = None
+        if prefix_with_dataset and multi:
+            prefix = os.path.splitext(os.path.basename(p))[0]
+
+        part = load_kilt_gold_wikipedia_ids_from_file(p, max_examples=max_examples, qid_prefix=prefix)
+
+        # merge (if collision, union the sets)
+        for qid, wids in part.items():
+            if qid not in merged:
+                merged[qid] = set()
+            merged[qid].update(wids)
+
+    return merged
+
+
+def wikipedia_id_from_doc_id(doc_id: str) -> str:
+    """
+    Extracts the wikipedia_id part from doc_id.
+    Example: "40885965_20" -> "40885965"
+    If there is no "_", returns the full doc_id.
+    """
+    doc_id = (doc_id or "").strip()
+    if not doc_id:
+        return ""
+    return doc_id.split("_", 1)[0]
 
 
 # -----------------------------
