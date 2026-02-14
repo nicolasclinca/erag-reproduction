@@ -1,22 +1,22 @@
 """
 erag_mod.py
-Valuta la qualità del retrieval usando metriche IR (P@k, recall, nDCG, MRR, etc.)
-con rilevanza determinata dalla performance downstream (EM, F1, etc.) su ogni documento.
+Evaluates retrieval quality using IR metrics (P@k, recall, nDCG, MRR, etc.)
+with relevance determined by downstream performance (EM, F1, etc.) on each document.
 
-1. Per ogni query-doc: genera risposta con solo quel documento
-2. Calcola score downstream (EM/F1) → label di rilevanza [0,1]
-3. Costruisce qrel (gold relevance) e run (ranking)
-4. Calcola metriche IR tramite pytrec_eval
+1. For each query-doc: generate an answer using only that document
+2. Compute downstream score (EM/F1) → relevance label [0,1]
+3. Build qrel (gold relevance) and run (ranking)
+4. Compute IR metrics via pytrec_eval
 
 MOD:
-- Supporto "ID-mode" per restituire triplette (query_id, doc_id, score) reali.
+- "ID-mode" support to return real (query_id, doc_id, score) triplets.
   In ID-mode:
     retrieval_results: Dict[query_id, List[doc_id]]
     expected_outputs: Dict[query_id, List[str]]
     query_id_to_query: Dict[query_id, query_text]
     doc_id_to_document: Dict[doc_id, doc_text]
     inputs_are_ids=True
-- Restituisce anche `triples`: lista di dict {"query_id","doc_id","score"}.
+- Also returns `triples`: list of dicts {"query_id","doc_id","score"}.
 """
 
 from typing import Dict, Callable, List, Union, Set, Optional, Any

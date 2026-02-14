@@ -1,12 +1,12 @@
 """
 evaluation.py
-Valutazione pipeline RAG (retrieval + generazione T5-FiD):
-- Metriche eRAG
-- Punteggi end-to-end
-- Correlazioni Spearman/Kendall tra metriche eRAG e performance end-to-end
-Salva log JSON in ../logs
+RAG pipeline evaluation (retrieval + T5-FiD generation):
+- eRAG metrics
+- End-to-end scores
+- Spearman/Kendall correlations between eRAG metrics and end-to-end performance
+Saves JSON logs in ../logs
 
-Uso CLI:
+CLI usage:
 
 BM25
 python evaluation.py --model_dir ../models/fid_t5 \
@@ -54,7 +54,7 @@ METRICS = {
 
 def save_json_log(data, file_path, description=""):
     """
-    Salva un dizionario in JSON e stampa un messaggio di conferma.
+    Saves a dictionary as JSON and prints a confirmation message.
     """
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
     with open(file_path, "w", encoding="utf-8") as f:
@@ -63,8 +63,8 @@ def save_json_log(data, file_path, description=""):
 
 def _limit_docs_per_query(retrieval_results_dict, k):
     """
-    Ritorna una copia di retrieval_results_dict dove per ogni query i documenti
-    sono limitati ai primi k.
+    Returns a copy of retrieval_results_dict where, for each query, documents
+    are limited to the first k.
     """
     return {q: docs[:k] for q, docs in retrieval_results_dict.items()}
 
@@ -81,7 +81,7 @@ def evaluation_erag(
 
     print(f"\nEvaluating eRAG scores...")
 
-    # Valutazione RAG (retrieval + generazione)
+    # RAG evaluation (retrieval + generation)
     erag_results = erag_mod.eval(
         retrieval_results=retrieval_results_dict,
         expected_outputs=expected_outputs,
@@ -90,12 +90,12 @@ def evaluation_erag(
         retrieval_metrics=retrieval_metrics
     )
 
-    # Salvataggi
+    # Saves
     per_input_file = os.path.join(log_dir, f"per_input_{method}.json")
-    save_json_log(erag_results['per_input'], per_input_file, "Risultati per-input")
+    save_json_log(erag_results['per_input'], per_input_file, "Per-input results")
 
     aggregated_file = os.path.join(log_dir, f"aggregated_{method}.json")
-    save_json_log(erag_results['aggregated'], aggregated_file, "Risultati aggregati")
+    save_json_log(erag_results['aggregated'], aggregated_file, "Aggregated results")
 
     return erag_results
 
@@ -110,37 +110,37 @@ def evaluation_e2e(
     k_values,
     log_dir,
 ):
-    # Preparazione container per tutti i k
+    # Prepare containers for all k
     all_e2e_scores = {}
     average_e2e_scores = {}
 
-    # Itera su ogni k in k_values e valuta end-to-end limitando i documenti a k
+    # Iterate over each k in k_values and evaluate end-to-end by limiting documents to k
     for k in sorted(set(k_values)):
         print(f"\nEvaluating end-to-end scores for k={k}...")
-        # Limita i documenti per query a k
+        # Limit documents per query to k
         retrieval_results_topk = _limit_docs_per_query(retrieval_results_dict, k)
 
-        # Generazione end-to-end e punteggi per questo k
+        # End-to-end generation and scores for this k
         end_to_end_generated = t5_generator_for_eval(retrieval_results_topk)
         e2e_scores_dict = downstream_metric_func(end_to_end_generated, expected_outputs)
 
-        # Garantisce che tutte le query siano presenti
+        # Ensure all queries are present
         e2e_scores_dict = {q: e2e_scores_dict.get(q, 0) for q in test_queries}
 
-        # Media
+        # Mean
         average_e2e_score = (sum(e2e_scores_dict.values()) / len(e2e_scores_dict)) if e2e_scores_dict else 0.0
 
-        # Salva nel contenitore per questo k
+        # Save into the container for this k
         all_e2e_scores[f"k_{k}"] = e2e_scores_dict
         average_e2e_scores[f"k_{k}"] = average_e2e_score
 
-    # Salva tutto in un unico file di log
+    # Save everything in a single log file
     e2e_file = os.path.join(log_dir, f"end_to_end_{method}.json")
     e2e_to_save = {
         "average_scores": average_e2e_scores,
         "per_k_scores": all_e2e_scores,
     }
-    save_json_log(e2e_to_save, e2e_file, "Punteggi end-to-end")
+    save_json_log(e2e_to_save, e2e_file, "End-to-end scores")
 
     return all_e2e_scores, average_e2e_scores
 
@@ -189,36 +189,36 @@ def get_correlations(
         correlations[metric_name] = corr_entry
 
     corr_file = os.path.join(log_dir, f"correlations_{method}.json")
-    save_json_log(correlations, corr_file, "Correlazioni retrieval vs end-to-end")
+    save_json_log(correlations, corr_file, "Retrieval vs end-to-end correlations")
     return correlations
 
 def define_retrieval_metrics(k_values, metric):
     retrieval_metrics = []
     for k in k_values:
         retrieval_metrics.extend([f'P_{k}', f'success_{k}'])
-        # Siccome f1 restituisce label di rilevanza non binarie, non è possibile calcolare recall, ndcg, map, recip_rank
+        # Since f1 returns non-binary relevance labels, it is not possible to compute recall, ndcg, map, recip_rank
         if metric != 'f1':
             retrieval_metrics.extend([f'recall_{k}', f'ndcg_cut_{k}', f'map_cut_{k}', f'recip_rank_cut_{k}'])
     return max(k_values), retrieval_metrics
 
 
 def full_evaluation(args):
-    # 0) Preparazione log directory
+    # 0) Prepare log directory
     log_dir = args.logs_dir
     os.makedirs(log_dir, exist_ok=True)
     
-    # 1) Definizione metriche
+    # 1) Metric definition
     doc_n, retrieval_metrics = define_retrieval_metrics(args.k_values, args.metric)
     selected_metric_func = METRICS[args.metric]
     print(f"\nUsing evaluation metric: {args.metric.upper()}")
 
-    # 2) Caricamento dataset di test
+    # 2) Load test dataset
     print(f"Loading test dataset queries and expected outputs from: {args.dataset}")
     expected_outputs = load_expected_outputs(args.dataset)
     test_queries = sorted(list(expected_outputs.keys()))
     print(f"Loaded {len(test_queries)} test queries.") 
 
-    # 3) Retrieval sui dati di test
+    # 3) Retrieval on test data
     print(f"Retrieving {doc_n} documents per query using: {args.method}")
     retriever = create_retriever(method=args.method, bm25_index_dir=args.bm25_index_dir, 
                                  faiss_index=args.faiss_index, collection=args.collection, 
@@ -228,7 +228,7 @@ def full_evaluation(args):
 
     torch.cuda.empty_cache()
 
-    # 4) Caricamento modello T5
+    # 4) Load T5 model
     print(f"Loading model from: {args.model_dir}")
     model = T5ForConditionalGeneration.from_pretrained(args.model_dir)
     tokenizer = T5Tokenizer.from_pretrained(args.model_dir)
@@ -248,7 +248,7 @@ def full_evaluation(args):
         num_beams=4
     )
 
-    # 5) Valutazione eRAG
+    # 5) eRAG evaluation
     erag_results = evaluation_erag(
         expected_outputs=expected_outputs,
         retrieval_results_dict=test_retrieval_results,
@@ -259,7 +259,7 @@ def full_evaluation(args):
         log_dir=log_dir
     )
 
-    # 6) Valutazione end-to-end per ogni k in k_values
+    # 6) End-to-end evaluation for each k in k_values
     all_e2e_scores, average_e2e_scores = evaluation_e2e(
         expected_outputs=expected_outputs,
         retrieval_results_dict=test_retrieval_results,
@@ -271,7 +271,7 @@ def full_evaluation(args):
         log_dir=log_dir
     )
 
-    # 7) Correlazioni tra metriche eRAG e punteggi end-to-end
+    # 7) Correlations between eRAG metrics and end-to-end scores
     correlations = get_correlations(
         erag_results=erag_results,
         retrieval_metrics=retrieval_metrics,

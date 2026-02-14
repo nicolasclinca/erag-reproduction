@@ -1,20 +1,20 @@
 """
 preprocess_wikipedia.py
-Scarica e preprocessa il KILT knowledge source (Wikipedia dump).
-Divide ogni articolo in passaggi di max 100 parole e salva in formato JSONL:
+Downloads and preprocesses the KILT knowledge source (Wikipedia dump).
+Splits each article into passages of max 100 words and saves in JSONL format:
 {"id": "wikipedia_id_passage_num", "contents": "title [SEP] passage_text"}
 
 Output: ../data/collection/wikipedia_passages.jsonl
 
-Uso CLI:
+CLI usage:
 
-Download completo (~5.9M articoli → ~108M passaggi)
+Full download (~5.9M articles → ~108M passages)
 python preprocess_wikipedia.py --collection ../data/collection/wikipedia_passages.jsonl
 
-Limita a N record (per test/debug)
+Limit to N records (for test/debug)
 python preprocess_wikipedia.py --max_record 10000 --collection ../data/collection/wiki_small.jsonl
 
-Con throttling e buffer personalizzato
+With throttling and custom buffer
 python preprocess_wikipedia.py --buffer_size 1000000 --throttle \
     --collection ../data/collection/wikipedia_passages.jsonl
 """
@@ -124,9 +124,9 @@ if __name__=="__main__":
     parser = argparse.ArgumentParser(description="Preprocess Wikipedia Dump",
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--url", type=str, default="http://dl.fbaipublicfiles.com/KILT/kilt_knowledgesource.json",
-                        help="URL della knowledge source KILT")
+                        help="KILT knowledge source URL")
     parser.add_argument("--collection", type=str, default="../data/collection/wikipedia_passages.jsonl",
-                        help="Path di output JSONL")
+                        help="Output JSONL path")
     parser.add_argument("--max_record", type=int, default=0,
                         help="Number of record taken from the Wikipedia Dump (for smaller wikipedia dump). Default is 0 (no limit).")
     parser.add_argument("--buffer_size", type=int, default=500000,

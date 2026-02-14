@@ -1,41 +1,41 @@
 """
 evaluate_all_retrieval_metrics.py
 
-Calcola metriche di retrieval (P@k, success@k, recall@k, nDCG@k, MAP@k, MRR@k)
-a partire da file assessed run:
+Computes retrieval metrics (P@k, success@k, recall@k, nDCG@k, MAP@k, MRR@k)
+starting from assessed run files:
 
   <input_filename>_assessed_run.csv
 
-con colonne:
+with columns:
   query_id, doc_id, score, run_id, relevance
 
-Per ogni file assessed in --input_folder produce:
+For each assessed file in --input_folder it produces:
 - <input_filename>_retrieval_metrics.csv
-    colonne: query_id, <metrica1>, <metrica2>, ...
-    (una riga per query)
+    columns: query_id, <metric1>, <metric2>, ...
+    (one row per query)
 
 - <input_filename>_mean_metrics.csv
-    colonne: <metrica1>, <metrica2>, ...
-    (una sola riga: media delle metriche su tutte le query)
+    columns: <metric1>, <metric2>, ...
+    (a single row: mean of metrics over all queries)
 
-Scelta metriche in base al tipo di downstream relevance
--------------------------------------------------------
-- Se relevance è BINARIA (0/1): calcola
+Metric selection based on downstream relevance type
+---------------------------------------------------
+- If relevance is BINARY (0/1): computes
     P_k, success_k, recall_k, ndcg_cut_k, map_cut_k, recip_rank_cut_k
-  (come build_erag_qrels.py + erag_mod.py)
+  (as in build_erag_qrels.py + erag_mod.py)
 
-- Se relevance è CONTINUA (es. F1 in [0,1]): calcola SOLO
+- If relevance is CONTINUOUS (e.g., F1 in [0,1]): computes ONLY
     P_k, success_k
-  (come erag_mod.py: le altre metriche non sono supportate con relevance continua)
+  (as in erag_mod.py: the other metrics are not supported with continuous relevance)
 
-Uso CLI
+CLI usage
 -------
 python evaluate_all_retrieval_metrics.py \
   --input_folder ../input_runs/nq \
   --k_values 10 30 50 \
   --overwrite
 
-Per relevance continua:
+For continuous relevance:
 python evaluate_all_retrieval_metrics.py \
   --input_folder ../input_runs/nq \
   --k_values 10 30 50 \
@@ -54,7 +54,7 @@ import pytrec_eval
 
 
 # -----------------------------
-# Metriche (come build_erag_qrels.py / evaluation.py)
+# Metrics (as in build_erag_qrels.py / evaluation.py)
 # -----------------------------
 def define_retrieval_metrics(k_values: List[int], binary_relevance: bool) -> List[str]:
     retrieval_metrics: List[str] = []
@@ -105,7 +105,7 @@ def load_assessed_run(
     run: Dict[str, Dict[str, float]] = {}
     qrel: Dict[str, Dict[str, Any]] = {}
 
-    # dedup per qid/docid: se ripetuta, tieni score max (e relevance max)
+    # dedup per qid/docid: if repeated, keep max score (and max relevance)
     seen: Dict[Tuple[str, str], Tuple[float, Any]] = {}
 
     with open(run_path, "r", encoding="utf-8", newline="") as f:
@@ -132,7 +132,7 @@ def load_assessed_run(
             raw_rel = row.get("relevance", 0)
 
             if binary_relevance:
-                # robust: qualsiasi relevance > 0 diventa 1
+                # robust: any relevance > 0 becomes 1
                 try:
                     rel_f = float(raw_rel)
                 except Exception:
@@ -150,7 +150,7 @@ def load_assessed_run(
                 if score > prev_score:
                     seen[key] = (score, rel_val)
                 else:
-                    # tieni relevance max (robusto a inconsistenze)
+                    # keep max relevance (robust to inconsistencies)
                     try:
                         if float(rel_val) > float(prev_rel):
                             seen[key] = (prev_score, rel_val)
@@ -167,7 +167,7 @@ def load_assessed_run(
 
 
 # -----------------------------
-# Helpers metriche
+# Metric helpers
 # -----------------------------
 def _is_recip_rank_k(m: str) -> bool:
     m_low = m.lower()
@@ -188,8 +188,8 @@ def compute_metrics_binary(
     metrics: List[str],
 ) -> Dict[str, Dict[str, float]]:
     """
-    Calcolo con pytrec_eval per metriche binary-safe.
-    Gestiamo recip_rank_cut_k separatamente (come erag_mod.py).
+    Computation with pytrec_eval for binary-safe metrics.
+    We handle recip_rank_cut_k separately (as in erag_mod.py).
     """
     qids = sorted(run.keys())
     results: Dict[str, Dict[str, float]] = {qid: {} for qid in qids}
@@ -218,7 +218,7 @@ def compute_metrics_binary(
             for qid in qids:
                 results[qid][m] = float((per_q.get(qid, {}) or {}).get("recip_rank", 0.0))
 
-    # assicura presenza di tutte le metriche
+    # ensure presence of all metrics
     for qid in qids:
         for m in metrics:
             if m not in results[qid]:
@@ -233,15 +233,15 @@ def compute_metrics_continuous(
     metrics: List[str],
 ) -> Dict[str, Dict[str, float]]:
     """
-    Calcolo manuale per relevance continua:
-      - success_k: max relevance nel top-k
-      - P_k: mean relevance nel top-k (diviso per k anche se i doc sono meno di k)
+    Manual computation for continuous relevance:
+      - success_k: max relevance in the top-k
+      - P_k: mean relevance in the top-k (divided by k even if fewer than k docs)
     """
     qids = sorted(run.keys())
     results: Dict[str, Dict[str, float]] = {qid: {} for qid in qids}
 
     for qid in qids:
-        # ranking per score desc
+        # ranking by score desc
         ranked_docids = [d for d, _s in sorted((run.get(qid, {}) or {}).items(), key=lambda x: x[1], reverse=True)]
         labels = qrel.get(qid, {}) or {}
 
@@ -373,9 +373,9 @@ def main() -> None:
 
         run, qrel = load_assessed_run(run_path, binary_relevance=binary_relevance)
 
-        # pytrec_eval richiede che le chiavi query coincidano tra run e qrel (come erag_mod)
+        # pytrec_eval requires that query keys match between run and qrel (as in erag_mod)
         if set(run.keys()) != set(qrel.keys()):
-            # allinea: se una query non ha doc in qrel (raro), metti dict vuoto
+            # align: if a query has no docs in qrel (rare), set an empty dict
             all_qids = set(run.keys()) | set(qrel.keys())
             run = {qid: run.get(qid, {}) or {} for qid in all_qids}
             qrel = {qid: qrel.get(qid, {}) or {} for qid in all_qids}

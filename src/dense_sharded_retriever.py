@@ -1,34 +1,34 @@
 """
 dense_sharded_retriever.py
-Dense retrieval generico su indici FAISS *sharded* in stile PySerini, con mapping rid->docid
-e docstore Lucene per docid->contents.
+Generic dense retrieval over *sharded* FAISS indexes in PySerini style, with rid->docid mapping
+and a Lucene docstore for docid->contents.
 
-Struttura indice attesa (come per i tuoi indici DPR/BGE/TCT):
+Expected index structure (as for your DPR/BGE/TCT indexes):
 
 indexes/<name>/
   part_0/
-    index   # shard FAISS
-    docid   # mapping rid -> docid (una riga per vettore)
+    index   # FAISS shard
+    docid   # mapping rid -> docid (one line per vector)
   part_1/
     index
     docid
   ...
 
-Caratteristiche principali:
-- Carica TUTTI gli shard FAISS una sola volta (opzionale mmap).
-- Per un batch di query:
-  1) encoda le query usando un query encoder (build_query_encoder da query_encoders.py)
-  2) fa search su ogni shard (top per_shard_k)
-  3) fonde i risultati in un top-k globale (per query) tramite heap
-  4) risolve rid -> docid usando i file docid degli shard (caricati on-demand con LRU cache)
-  5) risolve docid -> contents usando un docstore Lucene (storeRaw)
+Main features:
+- Loads ALL FAISS shards only once (optional mmap).
+- For a batch of queries:
+  1) encodes queries using a query encoder (build_query_encoder from query_encoders.py)
+  2) searches each shard (top per_shard_k)
+  3) merges results into a global top-k (per query) via heap
+  4) resolves rid -> docid using shard docid files (loaded on-demand with an LRU cache)
+  5) resolves docid -> contents using a Lucene docstore (storeRaw)
 
-Nota su per_shard_k (accuratezza):
-- Se cerchi solo k per shard, il top-k globale può risultare approssimato.
-- Impostare per_shard_k > k riduce il rischio di “miss”.
-- Default: per_shard_k = k*4 (capped a 1000).
+Note on per_shard_k (accuracy):
+- If you only retrieve k per shard, the global top-k may be approximate.
+- Setting per_shard_k > k reduces the risk of “miss”.
+- Default: per_shard_k = k*4 (capped at 1000).
 
-Per docstore Lucene:
+For the Lucene docstore:
 python -m pyserini.index.lucene \
   -collection JsonCollection \
   -input ../data/collection \
@@ -37,7 +37,7 @@ python -m pyserini.index.lucene \
   -threads 8 \
   -storeRaw
 
-Uso CLI:
+CLI usage:
 python dense_sharded_retriever.py \
   --index_root_dir ../indexes/wiki-bge-118m \
   --docstore_index_dir ../indexes/wiki_docstore_lucene \
@@ -70,7 +70,7 @@ _PART_RE = re.compile(r"^part_(\d+)$")
 
 
 def _list_part_dirs(root: str) -> List[str]:
-    """Lista e ordina part_0..part_N in modo numerico."""
+    """Lists and sorts part_0..part_N numerically."""
     if not os.path.isdir(root):
         raise ValueError(f"Index root dir not found: {root}")
 
@@ -89,7 +89,7 @@ def _list_part_dirs(root: str) -> List[str]:
 # ============================
 class QueryEncoder(Protocol):
     """
-    Interfaccia minima richiesta:
+    Minimal required interface:
     - .D
     - .encode(List[str], batch_size) -> np.ndarray float32 (B, D)
     """
@@ -105,8 +105,8 @@ class QueryEncoder(Protocol):
 # ============================
 class _LRUCache:
     """
-    Cache LRU minimale per caricare in RAM i docid di pochi shard alla volta.
-    Utile perché i docid file possono essere grandi.
+    Minimal LRU cache to load into RAM the docids of only a few shards at a time.
+    Useful because docid files can be large.
     """
 
     def __init__(self, max_loaded: int = 1):
@@ -134,7 +134,7 @@ class _LRUCache:
 # FAISS helpers
 # ============================
 def _safe_omp_set_threads(n: Optional[int]) -> None:
-    """Imposta threads FAISS (best effort)."""
+    """Sets FAISS threads (best effort)."""
     if n is None:
         return
     try:
@@ -145,8 +145,8 @@ def _safe_omp_set_threads(n: Optional[int]) -> None:
 
 def _read_faiss_index(path: str, mmap: bool) -> "faiss.Index":
     """
-    Carica un indice FAISS.
-    Se mmap=True prova IO_FLAG_MMAP, altrimenti fallback standard.
+    Loads a FAISS index.
+    If mmap=True, tries IO_FLAG_MMAP, otherwise falls back to standard loading.
     """
     if mmap and hasattr(faiss, "IO_FLAG_MMAP"):
         try:
@@ -158,23 +158,23 @@ def _read_faiss_index(path: str, mmap: bool) -> "faiss.Index":
 
 def _assert_inner_product_metric(indexes: List["faiss.Index"], part_dirs: List[str]) -> None:
     """
-    Controllo di coerenza: tutti gli shard dovrebbero avere metric_type = INNER_PRODUCT.
-    Se non disponibile o non esposto, non blocca.
+    Consistency check: all shards should have metric_type = INNER_PRODUCT.
+    If not available or not exposed, do not block.
     """
     try:
         expected = int(getattr(indexes[0], "metric_type", faiss.METRIC_INNER_PRODUCT))
         if expected != int(faiss.METRIC_INNER_PRODUCT):
             raise RuntimeError(
-                f"Shard {part_dirs[0]}: metric_type={expected} (atteso INNER_PRODUCT). "
-                "La logica per la metrica corretta è stata rimossa; ripristinala."
+                f"Shard {part_dirs[0]}: metric_type={expected} (expected INNER_PRODUCT). "
+                "The logic for the correct metric has been removed; restore it."
             )
 
         for idx, d in zip(indexes[1:], part_dirs[1:]):
             mt = int(getattr(idx, "metric_type", expected))
             if mt != expected:
-                raise RuntimeError(f"Metrica FAISS non uniforme tra shard: {d} metric_type={mt}, atteso {expected}")
+                raise RuntimeError(f"Non-uniform FAISS metric across shards: {d} metric_type={mt}, expected {expected}")
     except AttributeError:
-        # Alcuni wrapper potrebbero non esporre metric_type: non bloccare
+        # Some wrappers may not expose metric_type: do not block
         return
 
 
@@ -189,25 +189,25 @@ class RetrievedDoc(TypedDict):
 
 class ShardedFaissSearcher:
     """
-    Searcher generico su shard FAISS in stile PySerini, usando un QueryEncoder esterno.
+    Generic searcher over PySerini-style FAISS shards, using an external QueryEncoder.
 
-    Parametri
+    Parameters
     ---------
     index_root_dir:
-        Root con part_0..part_N
+        Root with part_0..part_N
     query_encoder:
-        Encoder con .encode(...) -> embedding float32 (B, D)
+        Encoder with .encode(...) -> float32 embeddings (B, D)
     docstore_index_dir:
-        Indice Lucene con storeRaw per docid -> raw json -> contents.
-        Se None, puoi usare search_docids_batch() ma non docids_to_contents().
+        Lucene index with storeRaw for docid -> raw json -> contents.
+        If None, you can use search_docids_batch() but not docids_to_contents().
     max_loaded_docid_shards:
-        Dimensione cache LRU per docid (shard docid file)
+        LRU cache size for docids (shard docid files)
     mmap:
-        Se True tenta faiss.read_index(..., IO_FLAG_MMAP)
+        If True, tries faiss.read_index(..., IO_FLAG_MMAP)
     default_per_shard_k:
-        Se None, per_shard_k viene deciso per chiamata (k*4 capped)
+        If None, per_shard_k is decided per call (k*4 capped)
     assert_inner_product:
-        Se True, verifica che gli shard siano INNER_PRODUCT.
+        If True, checks that shards are INNER_PRODUCT.
     """
 
     def __init__(
@@ -224,7 +224,7 @@ class ShardedFaissSearcher:
         self.index_root_dir = index_root_dir
         self.part_dirs = _list_part_dirs(index_root_dir)
         if not self.part_dirs:
-            raise ValueError(f"Nessuno shard part_* trovato in: {index_root_dir}")
+            raise ValueError(f"No part_* shard found in: {index_root_dir}")
 
         self.query_encoder = query_encoder
         self.mmap = bool(mmap)
@@ -235,12 +235,12 @@ class ShardedFaissSearcher:
 
         _safe_omp_set_threads(faiss_threads)
 
-        # PRELOAD: carica una volta tutti gli shard FAISS
+        # PRELOAD: load all FAISS shards once
         self.indexes: List["faiss.Index"] = []
         for shard_dir in self.part_dirs:
             self.indexes.append(self._load_index(shard_dir))
 
-        # Check metrica (opzionale)
+        # Metric check (optional)
         if assert_inner_product:
             _assert_inner_product_metric(self.indexes, self.part_dirs)
 
@@ -257,7 +257,7 @@ class ShardedFaissSearcher:
         if not os.path.exists(docid_path):
             raise FileNotFoundError(f"Missing docid file: {docid_path}")
 
-        # splitlines() evita il caso di ultima riga vuota
+        # splitlines() avoids the case of an empty last line
         with open(docid_path, "r", encoding="utf-8") as f:
             return f.read().splitlines()
 
@@ -279,13 +279,13 @@ class ShardedFaissSearcher:
         per_shard_k: Optional[int] = None,
     ) -> List[List[Tuple[str, float]]]:
         """
-        Restituisce, per ogni query, una lista di (docid, score) con top-k globale.
+        Returns, for each query, a list of (docid, score) with global top-k.
 
-        Implementazione:
-        - encoda tutte le query (B, D)
-        - per ogni shard: search top per_shard_k
-        - merge globale per query con heap (min-heap di dimensione k)
-        - risolve rid->docid caricando solo i docid file degli shard effettivamente presenti nel top-k
+        Implementation:
+        - encodes all queries (B, D)
+        - for each shard: search top per_shard_k
+        - global merge per query with a heap (min-heap of size k)
+        - resolves rid->docid by loading only the docid files of shards actually present in the top-k
         """
         if not queries:
             return []
@@ -305,18 +305,18 @@ class ShardedFaissSearcher:
         # Encode queries
         Q = self.query_encoder.encode(queries, batch_size=encode_batch_size)
         if not isinstance(Q, np.ndarray) or Q.ndim != 2:
-            raise RuntimeError("Query embeddings shape non valida.")
+            raise RuntimeError("Invalid query embeddings shape.")
         qn, qd = Q.shape
         Qc = np.ascontiguousarray(Q, dtype=np.float32)
 
-        # heaps[i] è una min-heap di (score, shard_idx, rid), size <= k
+        # heaps[i] is a min-heap of (score, shard_idx, rid), size <= k
         # score: INNER_PRODUCT => “higher is better”
         heaps: List[List[Tuple[float, int, int]]] = [[] for _ in range(qn)]
 
         for shard_idx, shard_dir in enumerate(self.part_dirs):
             shard_index = self.indexes[shard_idx]
 
-            # check dimensionale: mismatch = encoder sbagliato o indice sbagliato
+            # dimensional check: mismatch = wrong encoder or wrong index
             if int(getattr(shard_index, "d", -1)) != int(qd):
                 raise RuntimeError(
                     f"Dim mismatch: query_dim={qd} vs index_dim={int(getattr(shard_index, 'd', -1))} in {shard_dir}"
@@ -340,13 +340,13 @@ class ShardedFaissSearcher:
                         if s > h[0][0]:
                             heapq.heapreplace(h, item)
 
-        # Determina gli shard necessari (lazy load docids)
+        # Determine needed shards (lazy load docids)
         needed_shards = {sh for h in heaps for (_s, sh, _rid) in h}
         docids_by_shard: Dict[int, List[str]] = {
             sh: self._get_docids(self.part_dirs[sh]) for sh in needed_shards
         }
 
-        # Build output per query: (docid, score) ordinati desc
+        # Build per-query output: (docid, score) sorted desc
         out: List[List[Tuple[str, float]]] = []
         for i in range(qn):
             items_sorted = sorted(heaps[i], key=lambda x: x[0], reverse=True)
@@ -361,10 +361,10 @@ class ShardedFaissSearcher:
 
     def docids_to_contents(self, docids: List[str]) -> List[str]:
         """
-        Converte docid -> contents usando il docstore Lucene (storeRaw).
+        Converts docid -> contents using the Lucene docstore (storeRaw).
         """
         if self.docstore is None:
-            raise RuntimeError("docstore non configurato: passa docstore_index_dir per usare docids_to_contents().")
+            raise RuntimeError("docstore not configured: pass docstore_index_dir to use docids_to_contents().")
 
         out: List[str] = []
         for did in docids:
@@ -395,14 +395,14 @@ class ShardedFaissSearcher:
         Returns:
             {query: [{"doc_id": str, "score": float, "contents": str}, ...]}
 
-        score è l'inner product FAISS (higher=better).
+        score is the FAISS inner product (higher=better).
         """
         if not queries:
             return {}
 
         if self.docstore is None:
             raise RuntimeError(
-                "docstore non configurato: passa docstore_index_dir per usare batch_retrieve()."
+                "docstore not configured: pass docstore_index_dir to use batch_retrieve()."
             )
 
         results: Dict[str, List[RetrievedDoc]] = {}
@@ -418,7 +418,7 @@ class ShardedFaissSearcher:
                 per_shard_k=per_shard_k,
             )  # List[List[Tuple[docid, score]]]
 
-            # raccogli docid per query e dedup globale (per minimizzare lookup Lucene)
+            # collect docids per query and global dedup (to minimize Lucene lookups)
             per_query_pairs: List[List[Tuple[str, float]]] = []
             all_docids: List[str] = []
 
@@ -427,7 +427,7 @@ class ShardedFaissSearcher:
                 per_query_pairs.append(pairs)
                 all_docids.extend([d for d, _s in pairs])
 
-            unique_docids = list(dict.fromkeys(all_docids))  # preserva ordine
+            unique_docids = list(dict.fromkeys(all_docids))  # preserves order
             did2cont = dict(zip(unique_docids, self.docids_to_contents(unique_docids)))
 
             for q, pairs in zip(batch_q, per_query_pairs):
@@ -452,7 +452,7 @@ def dense_sharded_batch_retrieve(
     per_shard_k: Optional[int] = None,
 ) -> Dict[str, List[RetrievedDoc]]:
     """
-    Wrapper funzionale: {query: [{"doc_id","score","contents"}...]}.
+    Functional wrapper: {query: [{"doc_id","score","contents"}...]}.
     """
     if searcher is None:
         raise ValueError("A ShardedFaissSearcher instance must be provided.")
@@ -493,23 +493,23 @@ def main():
         description="Generic dense retrieval over sharded FAISS + Lucene docstore.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--index_root_dir", required=True, help="Dir con part_0..part_N (FAISS shards)")
+    parser.add_argument("--index_root_dir", required=True, help="Dir with part_0..part_N (FAISS shards)")
     parser.add_argument("--docstore_index_dir", required=True,
-        help="Indice Lucene con storeRaw per docid->contents (es. wiki_docstore_lucene o bm25_index)")
+        help="Lucene index with storeRaw for docid->contents (e.g., wiki_docstore_lucene or bm25_index)")
     parser.add_argument("--encoder_type", choices=["dpr", "bge", "tct"], required=True)
 
-    parser.add_argument("--query", required=True, help="Singola query")
+    parser.add_argument("--query", required=True, help="Single query")
     parser.add_argument("--k", type=int, default=50)
-    parser.add_argument("--per_shard_k", type=int, default=None, help="Quanti risultati per shard prima del merge.")
+    parser.add_argument("--per_shard_k", type=int, default=None, help="How many results per shard before merging.")
     parser.add_argument("--threads", type=int, default=8, help="FAISS omp threads (CPU)")
-    parser.add_argument("--encode_batch_size", type=int, default=32, help="Batch size per query encoding")
+    parser.add_argument("--encode_batch_size", type=int, default=32, help="Batch size for query encoding")
     parser.add_argument("--max_loaded_docid_shards", type=int, default=16, help="Docid LRU cache size")
     parser.add_argument("--mmap", dest="mmap", action="store_true", help="Use FAISS IO_FLAG_MMAP (default)")
     parser.add_argument("--no_mmap", dest="mmap", action="store_false", help="Disable mmap")
     parser.set_defaults(mmap=True)
 
     parser.add_argument("--no_assert_inner_product", dest="assert_inner_product", action="store_false",
-        help="Disabilita il controllo metric_type==INNER_PRODUCT sugli shard.")
+        help="Disables the metric_type==INNER_PRODUCT check on shards.")
     parser.set_defaults(assert_inner_product=True)
 
     args = parser.parse_args()

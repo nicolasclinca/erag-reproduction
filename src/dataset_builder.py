@@ -1,19 +1,19 @@
 """
 dataset_builder.py
-Caricamento dataset KILT e creazione di dataset augmented con documenti retrieved.
-Formato output: [{"query": str, "retrieved_docs": [doc1, ...], "gold_answer": str}, ...]
+Loads KILT datasets and creates augmented datasets with retrieved documents.
+Output format: [{"query": str, "retrieved_docs": [doc1, ...], "gold_answer": str}, ...]
 
-Supporta:
-- bm25 (PySerini LuceneSearcher su indice BM25)
+Supports:
+- bm25 (PySerini LuceneSearcher over a BM25 index)
 - contriever (FAISS + JSONL collection)
-- dpr/bge/tct (FAISS sharded PySerini-style + docstore Lucene per docid->contents) via dense_sharded_retriever.py
+- dpr/bge/tct (FAISS sharded PySerini-style + Lucene docstore for docid->contents) via dense_sharded_retriever.py
 
-Note dense-sharded (dpr/bge/tct):
-- Gli indici sono in 120 shard (part_0..part_N) e vengono caricati una volta.
-- L'encoder query è selezionato in base al metodo (dpr/bge/tct).
-- Retrieval: search su ogni shard (top per_shard_k) + merge top-k globale.
+Dense-sharded notes (dpr/bge/tct):
+- Indexes are split into 120 shards (part_0..part_N) and are loaded once.
+- The query encoder is selected based on the method (dpr/bge/tct).
+- Retrieval: search each shard (top per_shard_k) + merge global top-k.
 
-Uso CLI:
+CLI usage:
 
 BM25:
 python dataset_builder.py --datasets ../data/nq-train-kilt.jsonl \
@@ -68,9 +68,9 @@ def load_expected_outputs(filename):
 
 def select_answer(gold_answers, max_words=250):
     """
-    Seleziona una singola risposta da una lista di risposte gold.
-    - Prima risposta con <= max_words parole.
-    - Se nessuna soddisfa il vincolo, prende la risposta più breve.
+    Selects a single answer from a list of gold answers.
+    - First answer with <= max_words words.
+    - If none satisfies the constraint, takes the shortest answer.
     """
     if not gold_answers:
         return ""
@@ -88,7 +88,7 @@ def select_answer(gold_answers, max_words=250):
 
 def augment_with_documents(dataset, retrieved_results, max_words):
     """
-    Restituisce una lista di dizionari nel formato:
+    Returns a list of dictionaries in the format:
         {"query": str,
          "retrieved_docs": [doc1, doc2, ..., dock],
          "gold_answer": str}
@@ -114,8 +114,8 @@ def retrieval_results(
     """
     Returns {query: [doc_contents1, doc_contents2, ...]}.
 
-    Nota: bm25_batch_retrieve e contriever_batch_retrieve ora ritornano anche doc_id e score,
-    quindi qui estraiamo solo i contents per non rompere l'augmenting attuale.
+    Note: bm25_batch_retrieve and contriever_batch_retrieve now also return doc_id and score,
+    so here we extract only the contents to avoid breaking the current augmenting logic.
     """
     method = (method or "").lower()
 
@@ -148,14 +148,14 @@ def retrieval_results(
 
 def create_retriever(args):
     """
-    Crea il retriever in base ad args.method (lowercase):
+    Creates the retriever based on args.method (lowercase):
     - bm25 -> LuceneSearcher
     - contriever -> DenseRetriever (FAISS + JSONL)
-    - dpr/bge/tct -> ShardedFaissSearcher + query encoder fixed
+    - dpr/bge/tct -> ShardedFaissSearcher + fixed query encoder
     """
     if args.method == "bm25":
         if not args.bm25_index_dir:
-            raise ValueError("--bm25_index_dir è obbligatorio con --method bm25")
+            raise ValueError("--bm25_index_dir is required with --method bm25")
         return create_bm25_searcher(args.bm25_index_dir)
 
     if args.method == "contriever":
@@ -163,7 +163,7 @@ def create_retriever(args):
         if not args.faiss_index: missing.append("--faiss_index")
         if not args.collection: missing.append("--collection")
         if missing:
-            raise ValueError(f"Con --method contriever servono: --faiss_index e --collection (mancanti: {', '.join(missing)})")
+            raise ValueError(f"With --method contriever you need: --faiss_index and --collection (missing: {', '.join(missing)})")
         return DenseRetriever(index_path=args.faiss_index, collection_path=args.collection, offsets_path=args.offsets, nprobe=args.nprobe, in_memory=args.in_memory)
 
     if args.method in ("dpr", "bge", "tct"):
@@ -171,7 +171,7 @@ def create_retriever(args):
         if not args.dense_index_root_dir: missing.append("--dense_index_root_dir")
         if not args.docstore_index_dir: missing.append("--docstore_index_dir")
         if missing:
-            raise ValueError(f"Con --method {args.method} servono: dense_index_root_dir e docstore_index_dir (mancanti: {', '.join(missing)})")
+            raise ValueError(f"With --method {args.method} you need: dense_index_root_dir and docstore_index_dir (missing: {', '.join(missing)})")
 
         query_encoder = build_query_encoder(encoder_type=args.method)
         return ShardedFaissSearcher(
@@ -185,12 +185,12 @@ def create_retriever(args):
 
 def augment_datasets(args):
     """
-    Processa una lista di dataset (args.datasets).
-    - Istanzia il retriever richiesto da args.method.
-    - Per ogni dataset:
-        * Carica le query e i gold answer
-        * Esegue il retrieval
-        * Salva il dataset arricchito in <out_dir>/<basename>-augmented-<method>.json
+    Processes a list of datasets (args.datasets).
+    - Instantiates the retriever required by args.method.
+    - For each dataset:
+        * Loads queries and gold answers
+        * Runs retrieval
+        * Saves the enriched dataset to <out_dir>/<basename>-augmented-<method>.json
     """
     retriever = create_retriever(args)
 
@@ -226,7 +226,7 @@ if __name__ == "__main__":
     parser.add_argument("--datasets", type=str, nargs="+", required=True,
                         help="List of paths to the datasets to process (separated by space).")
     parser.add_argument("--augmented_datasets", type=str, default=None,
-                        help="Directory dove salvare i dataset augmentati. Default: stessa cartella del dataset.")
+                        help="Directory where to save the augmented datasets. Default: same folder as the dataset.")
     parser.add_argument("--method", type=str.lower, choices=["bm25", "contriever", "dpr", "bge", "tct"], 
                         default="bm25", help="Retrieval method (bm25, contriever, dpr, bge, tct)")
     parser.add_argument("--k", type=int, default=50,
@@ -234,35 +234,35 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=256, help="Batch size for retrieval (default: 256)")
 
     # BM25 args
-    parser.add_argument("--bm25_index_dir", type=str, help="Directory indice BM25 (PySerini)")
+    parser.add_argument("--bm25_index_dir", type=str, help="BM25 index directory (PySerini)")
 
     # Contriever args
-    parser.add_argument("--faiss_index", type=str, help="Path indice FAISS (.faiss) per Contriever")
-    parser.add_argument("--collection", type=str, help="Path JSONL collezione (id, contents) per Contriever")
-    parser.add_argument("--offsets", type=str, default=None, help="Offsets binari uint64 (opzionale)")
+    parser.add_argument("--faiss_index", type=str, help="FAISS index path (.faiss) for Contriever")
+    parser.add_argument("--collection", type=str, help="JSONL collection path (id, contents) for Contriever")
+    parser.add_argument("--offsets", type=str, default=None, help="Binary uint64 offsets (optional)")
     parser.add_argument("--nprobe", type=int, default=64, help="FAISS nprobe")
-    parser.add_argument("--in_memory", action="store_true", help="Carica tutta la collezione in RAM (solo mini-run)")
+    parser.add_argument("--in_memory", action="store_true", help="Load the full collection into RAM (mini-run only)")
 
     # Dense sharded args (dpr/bge/tct)
     parser.add_argument("--dense_index_root_dir", type=str, default=None,
-                        help="Directory root con shard part_0..part_N (FAISS PySerini-style).")
+                        help="Root directory with shards part_0..part_N (FAISS PySerini-style).")
     parser.add_argument("--docstore_index_dir", type=str, default=None,
-                        help="Indice Lucene con storeRaw per docid->contents (può essere anche l'indice BM25 se storeRaw).")
+                        help="Lucene index with storeRaw for docid->contents (can also be the BM25 index if storeRaw).")
     parser.add_argument("--max_loaded_docid_shards", type=int, default=16,
-                        help="LRU cache size per shard docid (dense sharded)")
+                        help="LRU cache size for docid shards (dense sharded)")
     parser.add_argument("--dense_threads", type=int, default=8, help="FAISS omp threads (CPU)")
     parser.add_argument("--dense_encode_batch_size", type=int, default=32,
-                        help="Batch size per query encoding (dense sharded)")
+                        help="Batch size for query encoding (dense sharded)")
     parser.add_argument("--per_shard_k", type=int, default=None,
-                        help="Quanti risultati per shard prima del merge (default: k*4 capped).")
+                        help="How many results per shard before merging (default: k*4 capped).")
     parser.add_argument("--dense_mmap", dest="dense_mmap", action="store_true",
-                        help="Usa FAISS mmap per dense-sharded (default)")
+                        help="Use FAISS mmap for dense-sharded (default)")
     parser.add_argument("--no_dense_mmap", dest="dense_mmap", action="store_false",
-                        help="Disabilita FAISS mmap per dense-sharded")
+                        help="Disable FAISS mmap for dense-sharded")
     parser.set_defaults(dense_mmap=True)
 
     parser.add_argument("--max_answer_words", type=int, default=250,
-                        help="Numero massimo di parole per la risposta (default: 250).")
+                        help="Maximum number of words for the answer (default: 250).")
 
     args = parser.parse_args()
     augment_datasets(args)

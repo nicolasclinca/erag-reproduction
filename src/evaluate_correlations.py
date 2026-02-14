@@ -1,35 +1,35 @@
 """
 evaluate_correlations.py
 
-Calcola correlazioni tra metriche di retrieval (per-query) e score downstream (per-query, per-k),
-a partire da file già calcolati da:
+Computes correlations between retrieval metrics (per-query) and downstream score (per-query, per-k),
+starting from files already computed by:
 
 - evaluate_all_retrieval_metrics.py
     <run>_assessed_run_retrieval_metrics.csv
-    colonne: query_id, <metric_1>, <metric_2>, ...
+    columns: query_id, <metric_1>, <metric_2>, ...
 
 - evaluate_all_downstream.py
     <run>_downstream.csv
-    colonne: query_id, score, k
-    (una riga per query per ogni k)
+    columns: query_id, score, k
+    (one row per query for each k)
 
-Per ogni coppia (retrieval_metrics, downstream) scrive un CSV:
+For each pair (retrieval_metrics, downstream) it writes a CSV:
   <base_downstream>_correlations.csv
 
 Output CSV fields:
   metric, k_downstream, spearman_corr, spearman_p, kendall_corr, kendall_p
 
-Note importanti
+Important notes
 ---------------
-- Matching file:
+- File matching:
     <base>_assessed_run_retrieval_metrics.csv  <->  <base>_downstream.csv
-- Per ogni metrica (es. ndcg_cut_10) usa downstream con k=10.
-  Se k non presente nel downstream, scrive WARNING e usa k=50 se disponibile.
-  Se non è disponibile nemmeno k=50, salta la metrica.
-- Allineamento query: usa l'intersezione dei query_id tra retrieval_metrics e downstream(k),
-  ordinata per query_id, per garantire accoppiamento corretto.
+- For each metric (e.g., ndcg_cut_10) it uses downstream with k=10.
+  If k is not present in downstream, it prints a WARNING and uses k=50 if available.
+  If k=50 is not available either, it skips the metric.
+- Query alignment: uses the intersection of query_id between retrieval_metrics and downstream(k),
+  sorted by query_id, to guarantee correct pairing.
 
-Uso CLI
+CLI usage
 -------
 python evaluate_correlations.py \
   --input_folder ../input_runs/nq \
@@ -48,7 +48,7 @@ import scipy.stats as stats
 
 
 # -----------------------------
-# Metriche (come evaluate_all_retrieval_metrics.py)
+# Metrics (as in evaluate_all_retrieval_metrics.py)
 # -----------------------------
 def define_retrieval_metrics(k_values: List[int], binary_relevance: bool) -> List[str]:
     retrieval_metrics: List[str] = []
@@ -107,7 +107,7 @@ def list_downstream_files(input_folder: str) -> List[str]:
 # -----------------------------
 def base_from_retrieval_metrics_path(path: str) -> str:
     """
-    Esempio:
+    Example:
       nq_bge_better_assessed_run_retrieval_metrics.csv -> nq_bge_better
     """
     base = os.path.splitext(os.path.basename(path))[0]
@@ -125,7 +125,7 @@ def base_from_retrieval_metrics_path(path: str) -> str:
 
 def base_from_downstream_path(path: str) -> str:
     """
-    Esempio:
+    Example:
       nq_bge_better_downstream.csv -> nq_bge_better
     """
     base = os.path.splitext(os.path.basename(path))[0]
@@ -219,7 +219,7 @@ def load_downstream_csv(path: str) -> Dict[int, Dict[str, float]]:
 # -----------------------------
 def parse_k_from_metric_name(metric_name: str) -> Optional[int]:
     """
-    Estrae il k finale da nomi tipo:
+    Extracts the trailing k from names like:
       P_10, success_30, ndcg_cut_50, map_cut_10, recip_rank_cut_30
     """
     m = re.search(r"(\d+)$", metric_name or "")
@@ -238,10 +238,10 @@ def select_downstream_k(
     fallback_k: int = 50,
 ) -> Optional[int]:
     """
-    Regola:
-    - usa k della metrica se presente nel downstream
-    - altrimenti WARNING e usa fallback_k se presente
-    - altrimenti None (skip)
+    Rule:
+    - use the metric k if present in downstream
+    - otherwise WARNING and use fallback_k if present
+    - otherwise None (skip)
     """
     metric_k = parse_k_from_metric_name(metric_name)
 
@@ -355,7 +355,7 @@ def main() -> None:
         help="Fallback downstream k to use when metric-specific k is missing (as requested, default=50).",
     )
 
-    # opzionale: permette di “definire le metriche” come negli altri script
+    # optional: allows “defining the metrics” like in the other scripts
     parser.add_argument(
         "--k_values",
         type=int,

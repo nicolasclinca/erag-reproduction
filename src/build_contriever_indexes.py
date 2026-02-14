@@ -1,13 +1,13 @@
 """
 build_contriever_indexes.py
-Costruisce un indice OPQ+IVF-PQ (Contriever) partendo da una collezione preprocessata JSONL
-(id, contents). Include un tuning iniziale di batch_size su un subset di documenti, quindi 
-prosegue automaticamente con la combinazione migliore.
+Builds an OPQ+IVF-PQ (Contriever) index starting from a preprocessed JSONL collection
+(id, contents). Includes an initial batch_size tuning on a subset of documents, then
+automatically continues with the best combination.
 
-Requisiti:
+Requirements:
 pip install torch faiss-cpu transformers
 
-Uso CLI:
+CLI usage:
 python build_contriever_indexes.py --collection ../data/collection/wikipedia_passages.jsonl \
     --faiss_index_dir ./index_out_full \
     --tune --tune_docs 100000 \
@@ -28,14 +28,14 @@ import faiss
 from contriever_encoder import (ContrieverEncoder, MODEL_NAME, MAX_LENGTH, DTYPE)
 
 
-# ---------------- Config default ----------------
+# ---------------- Default config ----------------
 SEED = 42
 
 # Tuning (subset)
 TUNE_CANDIDATES: List[int] = [32, 64, 80, 96, 112, 128, 144]
-TUNE_DOCS = 100_000  # modificabile via CLI
+TUNE_DOCS = 100_000  # modifiable via CLI
 
-# Encoder knobs (valori di fallback, verranno rimpiazzati dal tuning)
+# Encoder knobs (fallback values, will be replaced by tuning)
 BATCH_SIZE = 16
 
 # IVF-PQ knobs full-scale
@@ -100,7 +100,7 @@ def autotune_batch_size(encoder: ContrieverEncoder, collection: str, tune_docs: 
                 torch.cuda.empty_cache()
                 torch.cuda.reset_peak_memory_stats()
             t0 = time.time()
-            _ = encoder.encode(sample, batch_size=bs, prefetch=True)  # embeddings scartati
+            _ = encoder.encode(sample, batch_size=bs, prefetch=True)  # discard embeddings
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
             dt = time.time() - t0
@@ -129,7 +129,7 @@ def autotune_batch_size(encoder: ContrieverEncoder, collection: str, tune_docs: 
         log(f"[tune] Nessuna combinazione valida. Uso fallback bs={fallback}.")
         return fallback
 
-    # Seleziona: max docs/s, a parità di throughput preferisci minor peak memory
+    # Select: max docs/s; for the same throughput prefer lower peak memory
     best_docs, best_peak, _, best_bs = max(ok_rows, key=lambda r: (r[0], -r[1]))
     log(f"[tune] Best -> bs={best_bs} | {best_docs:.1f} docs/s (peak {best_peak:.2f} GB)")
     return best_bs
@@ -228,12 +228,12 @@ def add_streaming(collection: str, out_dir: str, index: faiss.IndexIDMap2,
                   encoder: ContrieverEncoder, add_block: int, index_filename: str,
                   bs: int, checkpoint_every: int = 0, resume: bool = True) -> int:
     """
-    Aggiunge documenti all'indice in streaming usando come ID FAISS l'indice di riga (0-based)
-    del file JSONL.
+    Adds documents to the index in streaming, using as FAISS IDs the (0-based) line index
+    of the JSONL file.
 
-    Resume: se resume=True, riparte dalla riga last_line+1 salvata in add_progress.json.
-    Se resume=True ma il progress file non esiste e l'indice contiene già vettori,
-    viene sollevata un'eccezione per evitare duplicati.
+    Resume: if resume=True, restarts from line last_line+1 saved in add_progress.json.
+    If resume=True but the progress file does not exist and the index already contains vectors,
+    an exception is raised to avoid duplicates.
     """
     index_path = os.path.join(out_dir, index_filename)
     os.makedirs(out_dir, exist_ok=True)
@@ -241,13 +241,13 @@ def add_streaming(collection: str, out_dir: str, index: faiss.IndexIDMap2,
     prog_path = _progress_path(out_dir)
     prog_exists = os.path.exists(prog_path)
 
-    # Determina start_line in modo robusto
+    # Determine start_line robustly
     if resume:
         if prog_exists:
             prog = _load_progress(out_dir)
             start_line = int(prog.get("last_line", -1)) + 1
         else:
-            # Niente progress file: se l'indice non è vuoto, interrompi per evitare duplicati
+            # No progress file: if the index is not empty, stop to avoid duplicates
             if getattr(index, "ntotal", 0) > 0:
                 raise RuntimeError(
                     "Resume richiesto ma non esiste alcun progress file. "
@@ -256,7 +256,7 @@ def add_streaming(collection: str, out_dir: str, index: faiss.IndexIDMap2,
                 )
             start_line = 0
     else:
-        # Non si supporta l'append senza progress: se l'indice non è vuoto, interrompi
+        # Appending without progress is not supported: if the index is not empty, stop
         if getattr(index, "ntotal", 0) > 0:
             raise RuntimeError(
                 "Indice non vuoto e resume=False: per evitare duplicati interrompo. "
@@ -291,7 +291,7 @@ def add_streaming(collection: str, out_dir: str, index: faiss.IndexIDMap2,
             if not c:
                 continue
 
-            # ID FAISS = indice di riga
+            # FAISS ID = line index
             rid = int(i)
             buf_docs.append(c)
             buf_ids.append(rid)
@@ -305,7 +305,7 @@ def add_streaming(collection: str, out_dir: str, index: faiss.IndexIDMap2,
                     index.add_with_ids(np.ascontiguousarray(xb, dtype=np.float32), ids)
                     total_added += n
                     block_idx += 1
-                    # checkpoint opzionale
+                    # optional checkpoint
                     if checkpoint_every > 0 and (block_idx % checkpoint_every == 0):
                         faiss.write_index(index, index_path)
                         _save_progress(out_dir, last_added_line, int(index.ntotal))
@@ -319,7 +319,7 @@ def add_streaming(collection: str, out_dir: str, index: faiss.IndexIDMap2,
                 rate = total_added / max(1e-9, elapsed)
                 log(f"[add] Added {total_added:,} | {rate:.1f} docs/s | elapsed {elapsed/60:.1f} min")
 
-    # Flush finale
+    # Final flush
     if buf_docs:
         xb = encoder.encode(buf_docs, batch_size=bs, prefetch=True)
         n = xb.shape[0]
@@ -335,7 +335,7 @@ def add_streaming(collection: str, out_dir: str, index: faiss.IndexIDMap2,
                 rate = total_added / max(1e-9, elapsed)
                 log(f"[add][ckpt] Block {block_idx} | Added {total_added:,} | {rate:.1f} docs/s | saved -> {index_path}")
 
-    # Salvataggio finale su disco
+    # Final save to disk
     faiss.write_index(index, index_path)
     _save_progress(out_dir, last_added_line, int(index.ntotal))
     elapsed = time.time() - t0
@@ -361,8 +361,8 @@ def write_meta(out_dir: str, collection: str, index_filename: str, best_bs: int,
 
 def get_index_params_from_faiss(index: faiss.Index) -> dict:
     """
-    Estrae nlist, nprobe, M, nbits dal vero indice FAISS anche quando è wrappato
-    da IDMap2 e/o IndexPreTransform (OPQ).
+    Extract nlist, nprobe, M, nbits from the actual FAISS index even when it is wrapped
+    by IDMap2 and/or IndexPreTransform (OPQ).
     """
     core = index
     # Unwrap IDMap
@@ -378,7 +378,7 @@ def get_index_params_from_faiss(index: faiss.Index) -> dict:
         "m": None,
         "nbits": None,
     }
-    # IVFPQ espone .pq con M e nbits
+    # IVFPQ exposes .pq with M and nbits
     if hasattr(core, "pq"):
         params["m"] = int(getattr(core.pq, "M", 0))
         params["nbits"] = int(getattr(core.pq, "nbits", 0))
@@ -410,7 +410,7 @@ def main():
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--checkpoint_every", type=int, default=0,
                         help="Scrivi un checkpoint su disco ogni N blocchi. 0 = solo al termine.")
-    # fallback manuale se si vuole saltare il tuning:
+    # manual fallback if you want to skip tuning:
     parser.add_argument("--encode_batch_size", type=int, default=BATCH_SIZE)
     args = parser.parse_args()
 
@@ -418,38 +418,38 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     log(f"[env] device={device} | out_dir={args.faiss_index_dir}")
 
-    # Encoder (unico, riusato per tuning/train/add)
+    # Encoder (single instance, reused for tuning/train/add)
     encoder = ContrieverEncoder(MODEL_NAME, device, MAX_LENGTH, DTYPE)
 
-    # 1) FAISS threads per add
+    # 1) FAISS threads for add
     try:
         faiss.omp_set_num_threads(os.cpu_count() or 4)
         log(f"[faiss] Using {os.cpu_count()} CPU threads")
     except Exception:
         pass
 
-    # 2) Tuning bs (opzionale)
+    # 2) Tuning bs (optional)
     best_bs = args.encode_batch_size
     if args.tune:
         best_bs = autotune_batch_size(encoder, args.collection, tune_docs=args.tune_docs, candidates=TUNE_CANDIDATES)
 
-    # 3) Costruisci o carica indice
+    # 3) Build or load index
     index_path = os.path.join(args.faiss_index_dir, args.index_filename)
     index_exists = args.resume and os.path.exists(index_path)
 
     if index_exists:
-        # Carica direttamente l’indice
+        # Load the index directly
         index = build_or_load_index(np.empty((0, encoder.D), dtype=np.float32),
                                     args.faiss_index_dir, args.nlist, args.m, args.nbits, args.nprobe,
                                     index_filename=args.index_filename, resume=True)
     else:
-        # Costruisci training set e indice da zero
+        # Build training set and index from scratch
         X_train = build_training_matrix(args.collection, encoder, args.train_size,
                                         block_docs=args.train_block_docs, bs=best_bs)
         index = build_or_load_index(X_train, args.faiss_index_dir, args.nlist, args.m, args.nbits,
                                     args.nprobe, index_filename=args.index_filename, resume=args.resume)
 
-    # 4) Add streaming con checkpoint opzionali (IDs = line index)
+    # 4) Add streaming with optional checkpoints (IDs = line index)
     added = add_streaming(args.collection, args.faiss_index_dir, index, encoder, args.add_block,
                           args.index_filename, bs=best_bs, checkpoint_every=args.checkpoint_every, 
                           resume=args.resume)

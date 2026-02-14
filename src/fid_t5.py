@@ -1,10 +1,10 @@
 """
 fid_t5.py
-Training e inferenza di un modello T5 con architettura Fusion-in-Decoder (FiD).
-FiD: encoder processa ogni documento separatamente, poi concatena le rappresentazioni
-prima del decoder per generare la risposta finale.
+Training and inference for a T5 model with the Fusion-in-Decoder (FiD) architecture.
+FiD: the encoder processes each document separately, then concatenates the representations
+before the decoder to generate the final answer.
 
-Uso CLI:
+CLI usage:
 
 Training
 python fid_t5.py train --augmented_datasets ../data/train_augmented.json \
@@ -17,7 +17,7 @@ python fid_t5.py train --augmented_datasets ../data/train_augmented.json \
     --amp \
     --resume_from ./models/fid_t5/epoch_3/training_state.pt
 
-Inferenza
+Inference
 python fid_t5.py generate --model_dir ./models/fid_t5 \
     --input_json queries_docs.json \
     --output_json predictions.json \
@@ -57,8 +57,8 @@ def set_seed(seed: int = 42):
 
 def _optimizer_to_device(optimizer: torch.optim.Optimizer, device: torch.device) -> None:
     """
-    Dopo optimizer.load_state_dict(...), gli state tensors possono rimanere su CPU.
-    Questa utility li sposta sul device corretto.
+    After optimizer.load_state_dict(...), state tensors may remain on CPU.
+    This utility moves them to the correct device.
     """
     for state in optimizer.state.values():
         for k, v in state.items():
@@ -124,14 +124,14 @@ def load_training_state(
 
 
 # =========================
-# Dataset e Collate FiD
+# Dataset and FiD Collate
 # =========================
 class QA_Dataset_FiD(Dataset):
     """
-    Dataset per augmented_data nel formato:
+    Dataset for augmented_data in the format:
       {
         "query": str,
-        "gold_answer": str,            # può mancare in inferenza
+        "gold_answer": str,            # may be missing during inference
         "retrieved_docs": List[str]
       }
     """
@@ -150,7 +150,7 @@ class QA_Dataset_FiD(Dataset):
             docs = ex.get("retrieved_docs", None)
             answer = ex.get("gold_answer", None)
 
-            # Normalizza docs
+            # Normalize docs
             if isinstance(docs, str):
                 docs = [docs]
             if strip_empty_docs and isinstance(docs, list):
@@ -173,13 +173,13 @@ class QA_Dataset_FiD(Dataset):
             )
 
         if dropped > 0:
-            print(f"[QA_Dataset_FiD] Scartati {dropped} esempi malformati o senza risposta.")
+            print(f"[QA_Dataset_FiD] Dropped {dropped} malformed examples or examples without an answer.")
 
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        # Restituiamo stringhe; la tokenizzazione avviene nel collate
+        # We return strings; tokenization happens in the collate
         return self.samples[idx]
 
     @staticmethod
@@ -191,10 +191,10 @@ class QA_Dataset_FiD(Dataset):
         max_target_len: int = 64,
     ) -> Dict[str, torch.Tensor]:
         """
-        Restituisce tensori FiD con shape:
+        Returns FiD tensors with shape:
           - input_ids: (B, max_docs_per_item, max_input_len)
           - attention_mask: (B, max_docs_per_item, max_input_len)
-          - labels: (B, max_target_len) con pad -> -100
+          - labels: (B, max_target_len) with pad -> -100
         """
         if not batch:
             return {
@@ -283,8 +283,8 @@ def fid_encode_concat(
     attention_mask_batch: torch.Tensor,  # (B, N, L)
 ) -> tuple[BaseModelOutput, torch.Tensor]:
     """
-    Esegue l'encoder T5 per-doc e concatena lungo la dimensione sequenza (FiD).
-    Restituisce:
+    Runs the T5 encoder per-doc and concatenates along the sequence dimension (FiD).
+    Returns:
       - encoder_outputs: BaseModelOutput(last_hidden_state=(B, N*L, d))
       - encoder_attention_mask: (B, N*L)
     """
@@ -322,14 +322,14 @@ def train(args):
     tokenizer = T5Tokenizer.from_pretrained(args.model_name)
     model = T5ForConditionalGeneration.from_pretrained(args.model_name)
 
-    # Opzioni memoria/stabilità
+    # Memory/stability options
     model.config.use_cache = False
     if args.grad_checkpointing:
         model.gradient_checkpointing_enable()
 
     model.to(device)
 
-    # Datasets e Dataloaders
+    # Datasets and Dataloaders
     with open(args.augmented_datasets, "r", encoding="utf-8") as f:
         train_data = json.load(f)
     print("Loading dataset...")
@@ -352,13 +352,13 @@ def train(args):
         pin_memory=True,
     )
 
-    # Ottimizzatore e scheduler
+    # Optimizer and scheduler
     optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     if args.gradient_accumulation_steps is None:
         if args.effective_batch_size % args.per_device_batch_size != 0:
             raise ValueError(
-                "effective_batch_size deve essere divisibile per per_device_batch_size "
-                "oppure specifica --gradient_accumulation_steps."
+                "effective_batch_size must be divisible by per_device_batch_size "
+                "or specify --gradient_accumulation_steps."
             )
         grad_accum = args.effective_batch_size // args.per_device_batch_size
     else:
@@ -393,7 +393,7 @@ def train(args):
     global_step = 0
     os.makedirs(args.model_dir, exist_ok=True)
 
-    # Resume (da inizio epoca successiva a quella salvata)
+    # Resume (from the beginning of the epoch after the saved one)
     if args.resume_from:
         last_epoch, global_step = load_training_state(
             args.resume_from, model, optimizer, scheduler, scaler, device
@@ -418,7 +418,7 @@ def train(args):
             attention_mask = batch["attention_mask"].to(device)
             labels = batch["labels"].to(device)  # (B, T)
 
-            # Encoder sotto autocast quando AMP è attivo
+            # Encoder under autocast when AMP is active
             with torch.autocast(
                 device_type="cuda",
                 dtype=torch.float16,
@@ -445,7 +445,7 @@ def train(args):
             epoch_loss_sum += loss.item()
             epoch_count += 1
 
-            # optimizer step ogni grad_accum
+            # optimizer step every grad_accum
             if step_idx % grad_accum == 0:
                 if args.max_grad_norm is not None:
                     if args.amp and device.type == "cuda":
@@ -467,7 +467,7 @@ def train(args):
                     lr=f"{scheduler.get_last_lr()[0]:.2e}",
                 )
 
-        # Flush di eventuali gradienti residui se l'epoch non è multiplo di grad_accum
+        # Flush any leftover gradients if the epoch is not a multiple of grad_accum
         if (len(train_loader) % grad_accum) != 0:
             if args.max_grad_norm is not None:
                 if args.amp and device.type == "cuda":
@@ -487,7 +487,7 @@ def train(args):
         avg_train_loss = epoch_loss_sum / max(epoch_count, 1)
         print(f"Epoch {epoch} done. Train loss: {avg_train_loss:.4f}")
 
-        # Checkpoint per-epoca (opzionale) + training_state per resume da inizio epoca
+        # Per-epoch checkpoint (optional) + training_state for resuming from the beginning of the epoch
         if args.save_every_epoch:
             save_dir = os.path.join(args.model_dir, f"epoch_{epoch}")
             os.makedirs(save_dir, exist_ok=True)
@@ -508,7 +508,7 @@ def train(args):
             print(f"Saved epoch checkpoint to: {save_dir}")
             print(f"Saved training state to: {state_path}")
         elif epoch == args.num_epochs:
-            # Salva il modello finale
+            # Save the final model
             model.save_pretrained(args.model_dir)
             tokenizer.save_pretrained(args.model_dir)
             print(f"Saved final model to: {args.model_dir}")
@@ -522,7 +522,7 @@ def train(args):
 
 
 # =========================
-# Generazione (Inferenza)
+# Generation (Inference)
 # =========================
 def t5_fid_generator(
     queries_and_documents: Dict[str, List[str]],
@@ -536,16 +536,16 @@ def t5_fid_generator(
     **generate_kwargs,
 ) -> Dict[str, str]:
     """
-    FiD generation su un dizionario {query: [doc1, doc2, ...]}.
+    FiD generation over a dictionary {query: [doc1, doc2, ...]}.
 
-    Miglioramento efficienza:
-    - batching reale su GPU/CPU: raggruppiamo le query per numero di documenti (FiD richiede N fisso),
-      poi processiamo a batch (tokenize + encoder + generate).
-    - rispetto alla versione precedente (loop query-per-query) riduce overhead Python e aumenta throughput.
+    Efficiency improvement:
+    - real batching on GPU/CPU: we group queries by number of documents (FiD requires fixed N),
+      then process in batches (tokenize + encoder + generate).
+    - compared to the previous version (query-by-query loop) it reduces Python overhead and increases throughput.
 
-    Nota:
-    - Manteniamo la stessa interfaccia {query: [docs]} -> {query: answer}
-    - Se una query non ha documenti, ritorna "Error: No documents provided."
+    Note:
+    - We keep the same interface {query: [docs]} -> {query: answer}
+    - If a query has no documents, returns "Error: No documents provided."
     """
     model.eval()
     results: Dict[str, str] = {}
@@ -557,7 +557,7 @@ def t5_fid_generator(
     if total == 0:
         return results
 
-    # Prepara items e gestisce query senza docs
+    # Prepare items and handle queries with no docs
     items: List[tuple[str, List[str]]] = []
     for query, docs in queries_and_documents.items():
         if not docs:
@@ -568,12 +568,12 @@ def t5_fid_generator(
         docs = [str(d) for d in docs]
         items.append((query, docs))
 
-    # Raggruppa per numero di docs (FiD batchabile se N costante nel batch)
+    # Group by number of docs (FiD is batchable if N is constant within a batch)
     groups: Dict[int, List[tuple[str, List[str]]]] = {}
     for query, docs in items:
         groups.setdefault(len(docs), []).append((query, docs))
 
-    processed = total - len(items)  # include già gli errori per docs mancanti
+    processed = total - len(items)  # already includes errors for missing docs
     last_print = 0
 
     for n_docs, group_items in groups.items():
@@ -585,10 +585,10 @@ def t5_fid_generator(
 
             queries = [q for q, _ in batch]
 
-            # Flatten: (B*N) testi "question: ... context: ..."
+            # Flatten: (B*N) "question: ... context: ..." texts
             flat_texts: List[str] = []
             for q, docs in batch:
-                # n_docs è fisso per il gruppo
+                # n_docs is fixed for the group
                 for d in docs:
                     flat_texts.append(f"question: {q} context: {d}")
 
@@ -603,7 +603,7 @@ def t5_fid_generator(
             attention_mask = enc.attention_mask.to(device)  # (B*N, L)
 
             with torch.inference_mode():
-                # Encoder per-doc (B*N, L, d)
+                # Per-doc encoder (B*N, L, d)
                 enc_out = model.encoder(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
@@ -612,7 +612,7 @@ def t5_fid_generator(
                 last_hidden = enc_out.last_hidden_state
                 _, L, d_model = last_hidden.shape
 
-                # Concat FiD: (B, N*L, d)
+                # FiD concat: (B, N*L, d)
                 enc_hidden_concat = last_hidden.view(bsz, n_docs, L, d_model).reshape(bsz, n_docs * L, d_model)
                 enc_attn_mask = attention_mask.view(bsz, n_docs, L).reshape(bsz, n_docs * L)
 
@@ -642,7 +642,7 @@ def t5_fid_generator(
 
 def load_queries_docs_from_json(path: str) -> Dict[str, List[str]]:
     """
-    Carica un JSON di inferenza nel formato:
+    Loads an inference JSON in the format:
       {
         "query 1": ["doc1", "doc2", ...],
         "query 2": ["doc1", ...],
@@ -696,7 +696,7 @@ def main():
         "--resume_from",
         type=str,
         default=None,
-        help="Path a training_state.pt per riprendere training (resume da inizio epoca).",
+        help="Path to a training_state.pt to resume training (resume from the beginning of the epoch).",
     )
     p_train.add_argument("--seed", type=int, default=42)
 
@@ -708,7 +708,7 @@ def main():
     p_gen.add_argument("--max_input_len", type=int, default=256)
     p_gen.add_argument("--max_new_tokens", type=int, default=64)
     p_gen.add_argument("--num_beams", type=int, default=4)
-    p_gen.add_argument("--batch_size", type=int, default=16, help="Batch size per generazione (raggruppando per #docs).")
+    p_gen.add_argument("--batch_size", type=int, default=16, help="Batch size for generation (grouping by #docs).")
     p_gen.add_argument("--seed", type=int, default=42)
 
     args = parser.parse_args()

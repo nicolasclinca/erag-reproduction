@@ -1,10 +1,10 @@
 """
 contriever_encoder.py
-Encoder Contriever centralizzato per indicizzazione e retrieval.
+Centralized Contriever encoder for indexing and retrieval.
 
-- Default condivisi (MODEL_NAME, MAX_LENGTH, DTYPE)
+- Shared defaults (MODEL_NAME, MAX_LENGTH, DTYPE)
 - Mean pooling + L2 normalization (float32)
-- Prefetch tokenization opzionale per throughput elevato (GPU-friendly)
+- Optional tokenization prefetch for high throughput (GPU-friendly)
 """
 
 from typing import List
@@ -16,11 +16,11 @@ import torch.nn.functional as F
 from transformers import AutoTokenizer, AutoModel  # type: ignore
 
 
-# Default condivisi
+# Shared defaults
 MODEL_NAME = "facebook/contriever"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 MAX_LENGTH = 200
-DTYPE = torch.float16  # usato per autocast su GPU; pooling/normalizzazione in float32
+DTYPE = torch.float16  # used for autocast on GPU; pooling/normalization in float32
 
 class TokenizePrefetcher:
     def __init__(self, tokenizer, device, batch_size, max_length, prefetch_batches=8):
@@ -89,11 +89,11 @@ class ContrieverEncoder:
     def _forward_and_pool(self, inputs: dict) -> torch.Tensor:
         """
         Forward + mean pooling + L2 normalize (in float32).
-        Ritorna tensore [B, D] su device corrente.
+        Returns a tensor [B, D] on the current device.
         """
         with torch.amp.autocast(device_type="cuda", dtype=self.dtype, enabled=(self.device.type == "cuda")):
             out = self.model(**inputs).last_hidden_state
-        x = out.float()  # pooling e normalizzazione in float32 per consistenza
+        x = out.float()  # pooling and normalization in float32 for consistency
         mask = inputs["attention_mask"].to(x.dtype).unsqueeze(-1)
         mean = (x * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1e-6)
         if self.normalize:
@@ -102,10 +102,10 @@ class ContrieverEncoder:
 
     def encode(self, texts: List[str], batch_size: int = 64, prefetch: bool = False) -> np.ndarray:
         """
-        Encoda una lista di testi in embedding Contriever normalizzati.
-        - batch_size: dimensione batch
-        - prefetch: se True, usa prefetch tokenization (consigliato per build)
-        Ritorna np.ndarray float32 di shape [N, D]
+        Encodes a list of texts into normalized Contriever embeddings.
+        - batch_size: batch size
+        - prefetch: if True, uses tokenization prefetch (recommended for build)
+        Returns a float32 np.ndarray of shape [N, D]
         """
         if not texts:
             return np.empty((0, self.D), dtype=np.float32)
@@ -144,4 +144,3 @@ class ContrieverEncoder:
                     vecs.append(pooled.cpu().numpy().astype(np.float32, copy=False))
 
         return np.concatenate(vecs, axis=0) if vecs else np.empty((0, self.D), dtype=np.float32)
-    

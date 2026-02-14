@@ -1,19 +1,19 @@
 """
 build_retrieval_run.py
 
-Crea un "run file" di retrieval (stile trec-rag) a partire da un dataset KILT (WOW/FEVER/NQ).
-- Carica le query da uno o più file .jsonl KILT (campi tipici: id, input, output).
-- Esegue il retrieval con un metodo selezionabile: bm25, contriever, dpr, bge, tct
-- Salva i risultati in formato selezionabile via CLI: csv, json, txt
-  con le colonne/campi: query_id, doc_id, score, run_id
-  (run_id default = nome del metodo usato).
+Creates a retrieval "run file" (trec-rag style) from a KILT dataset (WOW/FEVER/NQ).
+- Loads queries from one or more KILT .jsonl files (typical fields: id, input, output).
+- Runs retrieval with a selectable method: bm25, contriever, dpr, bge, tct
+- Saves results in a CLI-selectable format: csv, json, txt
+  with columns/fields: query_id, doc_id, score, run_id
+  (run_id default = name of the method used).
 
-Nota su query duplicate:
-- Le funzioni di retrieval nella codebase sono indicizzate per "query text".
-  Se nel dataset esistono query identiche, qui facciamo retrieval una sola volta
-  e replichiamo i risultati per tutti i query_id associati a quel testo.
+Note on duplicate queries:
+- Retrieval functions in the codebase are indexed by "query text".
+  If identical queries exist in the dataset, here we run retrieval only once
+  and replicate the results for all query_id associated with that text.
 
-Uso CLI:
+CLI usage:
 
 BM25:
 python build_retrieval_run.py \
@@ -79,11 +79,11 @@ def load_kilt_queries_from_file(
     qid_prefix: Optional[str] = None,
 ) -> List[Tuple[str, str]]:
     """
-    Carica (query_id, query_text) da un file KILT jsonl.
-    - query_id: record["id"] se presente, altrimenti indice di riga
+    Load (query_id, query_text) from a KILT jsonl file.
+    - query_id: record["id"] if present, otherwise line index
     - query_text: record["input"].strip()
 
-    qid_prefix (opzionale): prefisso da anteporre a query_id (es. basename dataset).
+    qid_prefix (optional): prefix to prepend to query_id (e.g., dataset basename).
     """
     out: List[Tuple[str, str]] = []
     with open(path, "r", encoding="utf-8") as f:
@@ -117,8 +117,8 @@ def load_kilt_queries(
     prefix_with_dataset: bool = True,
 ) -> List[Tuple[str, str]]:
     """
-    Carica (qid, query) da una lista di file.
-    Se prefix_with_dataset=True, prefissa qid con <basename> per evitare collisioni tra dataset diversi.
+    Load (qid, query) from a list of files.
+    If prefix_with_dataset=True, prefix qid with <basename> to avoid collisions across different datasets.
     """
     all_pairs: List[Tuple[str, str]] = []
     multi = len(datasets) > 1
@@ -149,8 +149,8 @@ def retrieve_unique_queries(
     per_shard_k: Optional[int],
 ) -> Dict[str, List[RetrievedDoc]]:
     """
-    Esegue retrieval per una lista di query (stringhe) uniche.
-    Ritorna {query_text: [ {doc_id, score, contents}, ... ]}.
+    Run retrieval for a list of unique queries (strings).
+    Returns {query_text: [ {doc_id, score, contents}, ... ]}.
     """
     method = (method or "").lower()
 
@@ -194,7 +194,7 @@ def iter_run_rows(
     run_id: str,
 ) -> Iterable[Tuple[str, str, float, str]]:
     """
-    Yields (query_id, doc_id, score, run_id) replicando i risultati per query duplicate.
+    Yields (query_id, doc_id, score, run_id), replicating results for duplicate queries.
     """
     query2qids: Dict[str, List[str]] = defaultdict(list)
     for qid, q in qid_query_pairs:
@@ -238,7 +238,7 @@ def write_run_json(
     score_precision: int = 6,
 ) -> None:
     """
-    Scrive un JSON array streaming (senza tenere tutto in RAM).
+    Write a streaming JSON array (without keeping everything in RAM).
     """
     fmt = f"{{:.{int(score_precision)}f}}"
     with open(out_path, "w", encoding="utf-8") as f:

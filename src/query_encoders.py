@@ -1,13 +1,13 @@
 """
 query_encoders.py
-Query encoders “fixed” per gli indici sharded FAISS creati con indexing.sh.
+“Fixed” query encoders for sharded FAISS indexes created with indexing.sh.
 
-Indici creati con:
+Indexes created with:
 - BAAI/bge-base-en-v1.5
 - castorini/tct_colbert-v2-hnp-msmarco
 - facebook/dpr-ctx_encoder-multiset-base
 
-Per le query DPR si usa:
+For DPR queries we use:
 - facebook/dpr-question_encoder-multiset-base
 """
 
@@ -40,17 +40,17 @@ VectorSource = Literal["cls", "pooler"]
 
 class HFQueryEncoder:
     """
-    Encoder HF generico:
-    - carica tokenizer + model (classe configurabile)
+    Generic HF encoder:
+    - loads tokenizer + model (configurable class)
     - batching + tokenization
     - forward
-    - estrae embedding con:
+    - extracts embeddings with:
         - vector_source="cls": last_hidden_state[:,0,:]
         - vector_source="pooler": pooler_output
     - optional L2 normalize
     - optional query_prefix
 
-    Espone:
+    Exposes:
       - .D
       - .encode(List[str], batch_size) -> np.ndarray float32 (B, D)
     """
@@ -84,7 +84,7 @@ class HFQueryEncoder:
         except Exception:
             pass
 
-        # infer dim robustamente
+        # infer dim robustly
         self.D = int(getattr(getattr(self.model, "config", None), "hidden_size", 0) or 0)
         if self.D <= 0:
             with torch.inference_mode():
@@ -130,7 +130,7 @@ class HFQueryEncoder:
             else:
                 out = self.model(**enc)
 
-            x = self._extract(out).float()  # float32 per stabilità
+            x = self._extract(out).float()  # float32 for stability
             if self.normalize:
                 x = F.normalize(x, p=2, dim=1)
 
@@ -141,7 +141,7 @@ class HFQueryEncoder:
 
 class TctColBertPyseriniQueryEncoder:
     """
-    Replica della logica PySerini (TctColBertQueryEncoder):
+    Replica of the PySerini logic (TctColBertQueryEncoder):
       - input: "[CLS] [Q] " + query + "[MASK]" * 36
       - tokenizer: add_special_tokens=False, truncation=True, max_length=36
       - embedding: mean(outputs.last_hidden_state[:, 4:, :], dim=1)

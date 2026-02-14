@@ -1,28 +1,28 @@
 """
 build_all_assessed_runs.py
 
-Dato:
-- un file <dataset>_all_qrels.csv con colonne: query_id, doc_id, relevance
-- una cartella --input_folder contenente run file CSV con colonne: query_id, doc_id, score, run_id
+Given:
+- a <dataset>_all_qrels.csv file with columns: query_id, doc_id, relevance
+- an --input_folder directory containing run CSV files with columns: query_id, doc_id, score, run_id
 
-Crea, per ogni file CSV in input_folder, un file:
+Creates, for each CSV file in input_folder, a file:
   <input_filename>_assessed_run.csv
 
-con colonne:
+with columns:
   query_id, doc_id, score, run_id, relevance
 
-Dove:
-- query_id, doc_id, score, run_id sono presi dal file di input
-- relevance è presa da <dataset>_all_qrels.csv
-- se la coppia (query_id, doc_id) non esiste in all_qrels => relevance = 0
+Where:
+- query_id, doc_id, score, run_id are taken from the input file
+- relevance is taken from <dataset>_all_qrels.csv
+- if the pair (query_id, doc_id) does not exist in all_qrels => relevance = 0
 
-Note:
-- I file di input sono assunti essere CSV.
-- Il file all_qrels può contenere relevance int o float.
-- I file che terminano già con _assessed_run.csv vengono ignorati.
-- Il file all_qrels viene ignorato se si trova dentro input_folder.
+Notes:
+- Input files are assumed to be CSV.
+- The all_qrels file may contain relevance as int or float.
+- Files that already end with _assessed_run.csv are ignored.
+- The all_qrels file is ignored if it is located inside input_folder.
 
-Uso CLI
+CLI usage
 -------
 python build_all_assessed_runs.py \
   --all_qrels ../input_runs/nq/nq_all_qrels.csv \
@@ -49,10 +49,10 @@ def list_csv_files(folder: str) -> List[str]:
 
 def load_qrels_map(all_qrels_path: str) -> Dict[Tuple[str, str], Any]:
     """
-    Carica <dataset>_all_qrels.csv e ritorna un mapping:
+    Load <dataset>_all_qrels.csv and return a mapping:
       (query_id, doc_id) -> relevance
 
-    Se ci sono duplicati, mantiene la relevance massima.
+    If there are duplicates, keep the maximum relevance.
     """
     if not os.path.exists(all_qrels_path):
         raise FileNotFoundError(f"all_qrels not found: {all_qrels_path}")
@@ -70,7 +70,7 @@ def load_qrels_map(all_qrels_path: str) -> Dict[Tuple[str, str], Any]:
             raw_rel = row.get("relevance", 0)
             try:
                 rel_val: Any = float(raw_rel)
-                # se è intero, lo lasciamo come int (stile codebase)
+                # if it's an integer, keep it as int
                 if abs(rel_val - round(rel_val)) < 1e-12:
                     rel_val = int(round(rel_val))
             except Exception:
@@ -78,7 +78,7 @@ def load_qrels_map(all_qrels_path: str) -> Dict[Tuple[str, str], Any]:
 
             key = (qid, did)
             if key in rel_map:
-                # tieni max (robusto a duplicati)
+                # keep max (robust to duplicates)
                 try:
                     prev = float(rel_map[key])
                     cur = float(rel_val)
@@ -102,7 +102,7 @@ def assess_one_run(
     rel_map: Dict[Tuple[str, str], Any],
 ) -> Tuple[int, int]:
     """
-    Scrive out_path aggiungendo la colonna relevance.
+    Write out_path adding the relevance column.
     Returns:
       (n_rows_written, n_rows_with_rel_gt_zero)
     """

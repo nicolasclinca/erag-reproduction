@@ -1,10 +1,10 @@
 """
 metrics.py
-Metriche di valutazione per QA: Exact Match (EM) e F1 token-level.
-Normalizzazione: lowercase, rimozione punteggiatura, whitespace extra.
+Evaluation metrics for QA: Exact Match (EM) and token-level F1.
+Normalization: lowercase, punctuation removal, extra whitespace removal.
 
-EM: 1 se la risposta generata matcha esattamente almeno una gold answer, 0 altrimenti.
-F1: massimo F1 score tra tutte le gold answers per query (precision/recall sui token).
+EM: 1 if the generated answer exactly matches at least one gold answer, 0 otherwise.
+F1: maximum F1 score among all gold answers for the query (token precision/recall).
 
 Input:
 

@@ -1,22 +1,22 @@
 """
 build_qrels_og.py
 
-Crea un file di qrels_og (query_id, doc_id, relevance) in formato CSV
-a partire da:
-1) uno o più dataset KILT (.jsonl) contenenti gold evidence in output[*].provenance[*].wikipedia_id
-2) la collezione segmentata (JSONL) prodotta da preprocess_wikipedia.py con campi tipici:
+Creates a qrels_og file (query_id, doc_id, relevance) in CSV format
+starting from:
+1) one or more KILT datasets (.jsonl) containing gold evidence in output[*].provenance[*].wikipedia_id
+2) the segmented collection (JSONL) produced by preprocess_wikipedia.py with typical fields:
    {"id": "<wikipedia_id>_<segment_id>", "contents": ...}
 
-Regola di relevance (segment-level):
-- un segmento (doc_id completo, es. "40885965_20") è rilevante (relevance=1)
-  se la parte wikipedia_id del doc_id è tra i wikipedia_id gold del dataset per quella query_id.
-- In pratica qui scriviamo SOLO i segmenti rilevanti (qrels "solo-positivi"):
-  tutti i retrieved doc non presenti in qrels saranno considerati non rilevanti dai tool di evaluation.
+Relevance rule (segment-level):
+- a segment (full doc_id, e.g. "40885965_20") is relevant (relevance=1)
+  if the wikipedia_id part of the doc_id is among the gold wikipedia_id for that query_id.
+- In practice, here we write ONLY the relevant segments (positive-only qrels):
+  all retrieved docs not present in qrels will be considered non-relevant by evaluation tools.
 
 Output:
-- CSV con header: query_id,doc_id,relevance
+- CSV with header: query_id,doc_id,relevance
 
-Uso:
+Usage:
 python build_qrels_og.py \
   --datasets ../data/nq-train-kilt.jsonl \
   --collection ../data/collection/wikipedia_passages.jsonl \
@@ -40,7 +40,7 @@ from build_qrels import load_kilt_gold_wikipedia_ids, wikipedia_id_from_doc_id
 # -----------------------------
 def iter_collection_doc_ids(collection_path: str, max_docs: Optional[int] = None) -> Iterator[str]:
     """
-    Itera i doc_id (campo "id") dalla collezione JSONL.
+    Iterate doc_id values (the "id" field) from the JSONL collection.
     """
     with open(collection_path, "r", encoding="utf-8") as f:
         for i, line in enumerate(f):
@@ -65,7 +65,7 @@ def iter_collection_doc_ids(collection_path: str, max_docs: Optional[int] = None
 # -----------------------------
 def build_wikipedia_id_to_qids(gold_wiki_ids_by_qid: Dict[str, Set[str]]) -> Dict[str, List[str]]:
     """
-    Costruisce una mappa inversa:
+    Build an inverted map:
         {wikipedia_id: [query_id1, query_id2, ...]}
     """
     wid2qids: Dict[str, List[str]] = {}
@@ -88,8 +88,8 @@ def iter_qrels_og_rows(
     wid2qids: Dict[str, List[str]],
 ) -> Iterator[Tuple[str, str, int]]:
     """
-    Yields (query_id, doc_id, relevance=1) per tutti i segmenti della collezione
-    che appartengono a un wikipedia_id gold di una o più query.
+    Yields (query_id, doc_id, relevance=1) for all collection segments
+    that belong to a gold wikipedia_id for one or more queries.
     """
     for docid in collection_doc_ids:
         wid = wikipedia_id_from_doc_id(docid)
@@ -102,7 +102,7 @@ def iter_qrels_og_rows(
 
 def write_qrels_og_csv(rows: Iterator[Tuple[str, str, int]], out_path: str) -> int:
     """
-    Scrive CSV streaming e ritorna il numero di righe scritte (escl. header).
+    Write a streaming CSV and return the number of rows written (excluding header).
     """
     n = 0
     with open(out_path, "w", encoding="utf-8", newline="") as f:

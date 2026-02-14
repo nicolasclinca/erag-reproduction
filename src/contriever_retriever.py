@@ -1,15 +1,15 @@
 """
 contriever_retriever.py
-Dense retrieval su collezione JSONL preprocessata (id, contents) + indice FAISS OPQ+IVF-PQ.
+Dense retrieval over a preprocessed JSONL collection (id, contents) + FAISS OPQ+IVF-PQ index.
 
-Allineamento doc_id:
-- L'indice FAISS costruito da build_contriever_indexes.py usa come ID interno FAISS
-  l'indice di riga (0-based) del file JSONL (id_scheme = "line_index").
-- Per essere coerenti con BM25/DPR/BGE/TCT e con la collezione originale, questo retriever
-  mappa FAISS_ID (line index) -> doc_id originale (rec["id"], es. "40885965_20")
-  leggendo la riga corrispondente dal JSONL (preferibilmente via offsets binari).
+doc_id alignment:
+- The FAISS index built by build_contriever_indexes.py uses as FAISS internal ID
+  the row index (0-based) of the JSONL file (id_scheme = "line_index").
+- To be consistent with BM25/DPR/BGE/TCT and with the original collection, this retriever
+  maps FAISS_ID (line index) -> original doc_id (rec["id"], e.g., "40885965_20")
+  by reading the corresponding line from the JSONL (preferably via binary offsets).
 
-Uso CLI:
+CLI usage:
 python contriever_retriever.py --faiss_index ./index_out_full/ivfpq_opq_contriever.faiss \
     --collection ../data/collection/wikipedia_passages.jsonl \
     --offsets ./index_out_full/collection_offsets.u64.bin \
@@ -38,22 +38,22 @@ class RetrievedDoc(TypedDict):
 # --------- JSONL collection with optional offsets ---------
 class JsonlCollection:
     """
-    Accesso random (o best-effort) a un file JSONL dove ogni riga è un record:
-      {"id": "...", "contents": "..."}  (o compatibile)
+    Random access (or best-effort) to a JSONL file where each line is a record:
+      {"id": "...", "contents": "..."}  (or compatible)
 
-    Quando usata con Contriever:
-    - FAISS restituisce come ID l'indice di riga (line index) del JSONL.
-    - Qui risolviamo line index -> record (doc_id originale + contents).
+    When used with Contriever:
+    - FAISS returns as ID the JSONL line index (line index).
+    - Here we resolve line index -> record (original doc_id + contents).
 
-    offsets_path (consigliato):
-    - file binario uint64 little-endian, un offset per riga (costruito con build_offsets.py)
+    offsets_path (recommended):
+    - little-endian uint64 binary file, one offset per line (built with build_offsets.py)
     """
 
     def __init__(self, path: str, offsets_path: Optional[str] = None, in_memory: bool = False):
         self.path = path
         self.in_memory = in_memory
 
-        self._docs: Optional[List[Dict[str, str]]] = None  # lista in-memory di record {doc_id, contents}
+        self._docs: Optional[List[Dict[str, str]]] = None  # in-memory list of records {doc_id, contents}
         self._f = None
 
         self._off_f = None
@@ -61,7 +61,7 @@ class JsonlCollection:
         self._off_count = 0
 
         if in_memory:
-            # carica tutto (solo mini-run / debug)
+            # load everything (mini-run / debug only)
             docs: List[Dict[str, str]] = []
             with open(path, "r", encoding="utf-8") as f:
                 for i, line in enumerate(f):
@@ -78,10 +78,10 @@ class JsonlCollection:
             self._docs = docs
 
         elif offsets_path and os.path.exists(offsets_path):
-            # apri e mappa offsets, e tieni aperto anche l'handle del file JSONL
+            # open and mmap offsets, and also keep the JSONL file handle open
             self._off_f = open(offsets_path, "rb")
             self._off_mm = mmap.mmap(self._off_f.fileno(), 0, access=mmap.ACCESS_READ)
-            self._off_count = len(self._off_mm) // 8  # uint64 per riga
+            self._off_count = len(self._off_mm) // 8  # uint64 per line
             self._f = open(self.path, "rb")
 
     def _offset_at(self, i: int) -> int:
@@ -89,7 +89,7 @@ class JsonlCollection:
 
     def get_many_records(self, ids: List[int]) -> List[Dict[str, str]]:
         """
-        Ritorna una lista di record nello stesso ordine di ids:
+        Returns a list of records in the same order as ids:
           [{"doc_id": <original_id>, "contents": <text>}, ...]
         """
         if not ids:
@@ -108,7 +108,7 @@ class JsonlCollection:
         out: List[Dict[str, str]] = []
 
         if self._off_mm is None:
-            # fallback lento senza offsets: scansiona il file fino a max_id
+            # slow fallback without offsets: scan the file up to max_id
             max_id = max(ids)
             wanted = set(ids)
             got: Dict[int, Dict[str, str]] = {}
@@ -130,7 +130,7 @@ class JsonlCollection:
                 out.append(got.get(i, {"doc_id": "", "contents": ""}))
             return out
 
-        # offsets disponibili
+        # offsets available
         if self._f is None or self._f.closed:
             self._f = open(self.path, "rb")
 
@@ -154,13 +154,13 @@ class JsonlCollection:
 
     def get_many(self, ids: List[int]) -> List[str]:
         """
-        Backward-compatible: ritorna solo i contents (stesso ordine di ids).
+        Backward-compatible: returns only the contents (same order as ids).
         """
         recs = self.get_many_records(ids)
         return [r.get("contents", "") for r in recs]
 
     def close(self) -> None:
-        # chiudi in ordine: mmap -> file offsets -> file collection
+        # close in order: mmap -> offsets file -> collection file
         if self._off_mm is not None:
             try:
                 self._off_mm.close()
@@ -192,7 +192,7 @@ class JsonlCollection:
 # --------- Helper ---------
 def _set_nprobe_deep(index: faiss.Index, nprobe: Optional[int]) -> None:
     """
-    Imposta nprobe anche quando l'indice è wrappato in IDMap2 e/o IndexPreTransform (OPQ).
+    Sets nprobe also when the index is wrapped in IDMap2 and/or IndexPreTransform (OPQ).
     """
     if nprobe is None:
         return
@@ -204,7 +204,7 @@ def _set_nprobe_deep(index: faiss.Index, nprobe: Optional[int]) -> None:
         # Unwrap PreTransform (OPQ)
         if isinstance(core, faiss.IndexPreTransform) and hasattr(core, "index"):
             core = core.index
-        # Now core dovrebbe essere IVF-like
+        # Now core should be IVF-like
         if hasattr(core, "nprobe"):
             core.nprobe = int(nprobe)
     except Exception:
@@ -229,15 +229,15 @@ class DenseRetriever:
 
     def dense_retrieve(self, query: str, k: int = 50, return_cosine: bool = True) -> Dict:
         """
-        Ritorna un oggetto "debug-friendly" con:
-          - faiss_ids: line index nel JSONL (int)
-          - doc_ids: rec["id"] originale (string)
+        Returns a "debug-friendly" object with:
+          - faiss_ids: line index in the JSONL (int)
+          - doc_ids: original rec["id"] (string)
           - distances_l2
           - documents (contents)
-          - approx_cosine (opzionale)
+          - approx_cosine (optional)
         """
         q = self.encoder.encode([query], batch_size=1).astype(np.float32)
-        D, I = self.index.search(q, k)  # L2 su vettori normalizzati
+        D, I = self.index.search(q, k)  # L2 on normalized vectors
 
         faiss_ids = [int(x) for x in I[0]]
         dists = [float(x) for x in D[0]]
@@ -276,20 +276,20 @@ class DenseRetriever:
     ) -> List[Dict]:
         """
         Batch retrieval:
-        - Encoda le query
-        - Cerca su FAISS
-        - Risolve FAISS_ID (line index) -> doc_id originale e contents via JsonlCollection
+        - Encodes the queries
+        - Searches on FAISS
+        - Resolves FAISS_ID (line index) -> original doc_id and contents via JsonlCollection
 
-        Ritorna una lista di dict (uno per query), stessi campi di dense_retrieve().
+        Returns a list of dicts (one per query), same fields as dense_retrieve().
         """
         if not queries:
             return []
 
-        # batch_size qui è inteso come "query batch size"; per l'encoder limitiamo a 64
+        # batch_size here is intended as "query batch size"; for the encoder we cap it at 64
         Q = self.encoder.encode(queries, batch_size=min(64, max(1, batch_size))).astype(np.float32)
         D, I = self.index.search(Q, k)
 
-        # fetch in blocco: dedup di tutti gli ID richiesti (solo validi)
+        # bulk fetch: dedup all requested IDs (valid only)
         unique_ids = sorted(set(int(x) for row in I for x in row if int(x) >= 0))
         recs = self.collection.get_many_records(unique_ids)
         id2rec = dict(zip(unique_ids, recs))
@@ -330,17 +330,17 @@ class DenseRetriever:
         return_cosine: bool = False,
     ) -> Dict[str, List[RetrievedDoc]]:
         """
-        API usata da build_retrieval_run.py / dataset_builder.py
+        API used by build_retrieval_run.py / dataset_builder.py
 
         Returns:
             {query: [{"doc_id": str, "score": float, "contents": str}, ...]}
 
         doc_id:
-          - doc_id originale della collezione (rec["id"], es. "40885965_20")
+          - original doc_id from the collection (rec["id"], e.g., "40885965_20")
 
         score:
-          - se return_cosine=True usa approx_cosine (higher=better)
-          - altrimenti usa -L2 (higher=better e preserva il ranking)
+          - if return_cosine=True uses approx_cosine (higher=better)
+          - otherwise uses -L2 (higher=better and preserves ranking)
         """
         out: Dict[str, List[RetrievedDoc]] = {}
 
@@ -368,7 +368,7 @@ class DenseRetriever:
 
                     did = str(doc_ids[j] or "").strip()
                     if not did:
-                        # fallback: se la riga non ha un id, usa fid (non ideale, ma evita stringhe vuote)
+                        # fallback: if the line has no id, use fid (not ideal, but avoids empty strings)
                         did = str(fid)
 
                     if return_cosine and cos is not None and j < len(cos):
@@ -386,16 +386,16 @@ class DenseRetriever:
 # --------- CLI ---------
 def main():
     parser = argparse.ArgumentParser(
-        description="Dense retrieval su JSONL + FAISS (Contriever). doc_id allineato al campo 'id' del JSONL.",
+        description="Dense retrieval over JSONL + FAISS (Contriever). doc_id aligned to the JSONL 'id' field.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--faiss_index", required=True, help="Path indice FAISS (.faiss)")
-    parser.add_argument("--collection", required=True, help="Path JSONL preprocessato (id, contents)")
-    parser.add_argument("--offsets", default=None, help="Offsets binari uint64 (opzionale, consigliato)")
+    parser.add_argument("--faiss_index", required=True, help="FAISS index path (.faiss)")
+    parser.add_argument("--collection", required=True, help="Preprocessed JSONL path (id, contents)")
+    parser.add_argument("--offsets", default=None, help="Binary uint64 offsets (optional, recommended)")
     parser.add_argument("--query", required=True, help="Query text")
     parser.add_argument("--k", type=int, default=50)
     parser.add_argument("--nprobe", type=int, default=64)
-    parser.add_argument("--in_memory", action="store_true", help="Carica l'intera collezione in RAM (solo mini-run)")
+    parser.add_argument("--in_memory", action="store_true", help="Load the entire collection into RAM (mini-run only)")
     args = parser.parse_args()
 
     retr = DenseRetriever(

@@ -1,12 +1,12 @@
 """
 bm25_retriever.py
-Retrieval BM25 su indice Lucene (PySerini) pre-costruito.
-Restituisce i top-k passaggi più rilevanti per una query.
+BM25 retrieval over a pre-built Lucene (PySerini) index.
+Returns the top-k most relevant passages for a query.
 
-Note:
+Notes:
 
-L'indice deve essere già costruito con PySerini (vedi esempio sotto).
-Costruzione indice (eseguire una volta):
+The index must already be built with PySerini (see example below).
+Index construction (run once):
 python -m pyserini.index.lucene \
     -collection JsonCollection \
     -input ../data/collection \
@@ -15,9 +15,9 @@ python -m pyserini.index.lucene \
     -threads 8 \
     -storePositions -storeDocvectors -storeRaw
 
-Uso CLI:
+CLI usage:
 
-Singola query:
+Single query:
 python bm25_retriever.py --bm25_index_dir ../indexes/bm25_index \
     --query "When did Apollo 11 land?" \
     --k 5 --threads 8
