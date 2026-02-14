@@ -1,6 +1,5 @@
 """
 query_encoders.py
-“Fixed” query encoders for sharded FAISS indexes created with indexing.sh.
 
 Indexes created with:
 - BAAI/bge-base-en-v1.5
