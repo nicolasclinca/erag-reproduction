@@ -287,28 +287,28 @@ def main() -> None:
     parser.add_argument("--txt_sep", type=str, default="\t", help="Separator for txt format (default: tab).")
 
     # BM25 args
-    parser.add_argument("--bm25_index_dir", type=str, default=None, help="Directory indice BM25 (PySerini)")
+    parser.add_argument("--bm25_index_dir", type=str, default=None, help="BM25 index directory (PySerini)")
     parser.add_argument("--bm25_threads", type=int, default=8, help="Threads for PySerini batch_search.")
 
     # Contriever args
-    parser.add_argument("--faiss_index", type=str, default=None, help="Path indice FAISS (.faiss) per Contriever")
-    parser.add_argument("--collection", type=str, default=None, help="Path JSONL collezione (id, contents) per Contriever")
-    parser.add_argument("--offsets", type=str, default=None, help="Offsets binari uint64 (opzionale)")
+    parser.add_argument("--faiss_index", type=str, default=None, help="Path to FAISS index (.faiss) for Contriever")
+    parser.add_argument("--collection", type=str, default=None, help="Path to JSONL collection (id, contents) for Contriever")
+    parser.add_argument("--offsets", type=str, default=None, help="Binary uint64 offsets (optional)")
     parser.add_argument("--nprobe", type=int, default=64, help="FAISS nprobe")
-    parser.add_argument("--in_memory", action="store_true", help="Carica tutta la collezione in RAM (solo mini-run)")
+    parser.add_argument("--in_memory", action="store_true", help="Load the whole collection into RAM (mini-run only)")
     parser.add_argument(
         "--contriever_return_cosine",
         action="store_true",
-        help="Usa approx_cosine come score (altrimenti usa -L2).",
+        help="Use approx_cosine as the score (otherwise use -L2).",
     )
 
     # Dense sharded args (dpr/bge/tct)
-    parser.add_argument("--dense_index_root_dir", type=str, default=None, help="Directory root shard part_0..part_N")
-    parser.add_argument("--docstore_index_dir", type=str, default=None, help="Indice Lucene docstore (storeRaw)")
-    parser.add_argument("--max_loaded_docid_shards", type=int, default=16, help="LRU cache size per shard docid")
+    parser.add_argument("--dense_index_root_dir", type=str, default=None, help="Root directory containing shards part_0..part_N")
+    parser.add_argument("--docstore_index_dir", type=str, default=None, help="Lucene docstore index (storeRaw)")
+    parser.add_argument("--max_loaded_docid_shards", type=int, default=16, help="LRU cache size per-shard docid")
     parser.add_argument("--dense_threads", type=int, default=8, help="FAISS omp threads (CPU)")
     parser.add_argument("--dense_encode_batch_size", type=int, default=32, help="Batch size per query encoding")
-    parser.add_argument("--per_shard_k", type=int, default=None, help="Risultati per shard prima del merge")
+    parser.add_argument("--per_shard_k", type=int, default=None, help="Results per shard before merge")
     parser.add_argument("--dense_mmap", dest="dense_mmap", action="store_true", help="Use FAISS mmap (default)")
     parser.add_argument("--no_dense_mmap", dest="dense_mmap", action="store_false", help="Disable FAISS mmap")
     parser.set_defaults(dense_mmap=True)

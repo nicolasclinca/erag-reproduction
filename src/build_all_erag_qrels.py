@@ -649,7 +649,7 @@ def main() -> None:
     parser.add_argument("--max_input_len", type=int, default=256)
     parser.add_argument("--max_output_len", type=int, default=64)
     parser.add_argument("--num_beams", type=int, default=4)
-    parser.add_argument("--batch_size", type=int, default=16, help="Batch size per generazione (raggruppando per #docs).")
+    parser.add_argument("--batch_size", type=int, default=16, help="Batch size per generation (grouped by #docs).")
 
     parser.add_argument("--metric", choices=list(METRICS.keys()), default="em")
     parser.add_argument("--score_precision", type=int, default=6)

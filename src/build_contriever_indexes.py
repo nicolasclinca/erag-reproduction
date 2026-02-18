@@ -390,16 +390,16 @@ def get_index_params_from_faiss(index: faiss.Index) -> dict:
 def main():
     parser = argparse.ArgumentParser(description="Build OPQ+IVF-PQ index from preprocessed JSONL, with bs tuning.",
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("--collection", required=True, help="File JSONL preprocessato (id, contents).")
+    parser.add_argument("--collection", required=True, help="Preprocessed JSONL file (id, contents).")
     parser.add_argument("--faiss_index_dir", type=str, default="./index_out_full", 
-                        help="Directory output (indice + meta).")
+                        help="Output directory (index + metadata).")
     parser.add_argument("--index_filename", type=str, default=INDEX_FILENAME,
-                        help="Nome del file indice FAISS salvato in faiss_index_dir.")
+                        help="Name of the FAISS index file saved in faiss_index_dir.")
     parser.add_argument("--meta_filename", type=str, default=META_FILENAME,
-                        help="Nome del file metadata JSON salvato in faiss_index_dir.")
+                        help="Name of the JSON metadata file saved in faiss_index_dir.")
     parser.add_argument("--tune", action="store_true", 
-                        help="Esegui tuning bs su un subset prima del build.")
-    parser.add_argument("--tune_docs", type=int, default=TUNE_DOCS, help="#docs per tuning.")
+                        help="Run batch-size tuning on a subset before building.")
+    parser.add_argument("--tune_docs", type=int, default=TUNE_DOCS, help="#docs to use for tuning.")
     parser.add_argument("--train_size", type=int, default=TRAIN_SIZE)
     parser.add_argument("--train_block_docs", type=int, default=TRAIN_BLOCK_DOCS)
     parser.add_argument("--add_block", type=int, default=ADD_BLOCK)
@@ -409,7 +409,7 @@ def main():
     parser.add_argument("--nbits", type=int, default=NBITS)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--checkpoint_every", type=int, default=0,
-                        help="Scrivi un checkpoint su disco ogni N blocchi. 0 = solo al termine.")
+                        help="Write a checkpoint to disk every N blocks. 0 = only at the end.")
     # manual fallback if you want to skip tuning:
     parser.add_argument("--encode_batch_size", type=int, default=BATCH_SIZE)
     args = parser.parse_args()

@@ -111,9 +111,9 @@ def create_bm25_searcher(index_dir: str) -> LuceneSearcher:
 def main():
     parser = argparse.ArgumentParser(description="BM25 retrieval (PySerini) with optional batch mode and threads control.",
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("--bm25_index_dir", required=True, help="Directory dell'indice BM25 (PySerini)")
-    parser.add_argument("--query", required=True, help="Singola query da cercare")
-    parser.add_argument("--k", type=int, default=50, help="Numero di documenti da recuperare per query")
+    parser.add_argument("--bm25_index_dir", required=True, help="BM25 index directory (PySerini)")
+    parser.add_argument("--query", required=True, help="Single query to search")
+    parser.add_argument("--k", type=int, default=50, help="Number of documents to retrieve per query")
     args = parser.parse_args()
 
     searcher = create_bm25_searcher(args.bm25_index_dir)
