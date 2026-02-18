@@ -49,9 +49,10 @@ The passage collection is built from the KILT knowledge source using `src/prepro
 
 ## What the pipeline produces
 
+- A passage collection: `data/collection/wikipedia_passages.jsonl`
+
 For each dataset (e.g., `nq`) you will typically obtain:
 
-- A passage collection: `data/collection/wikipedia_passages.jsonl`
 - One or more retrieval run files (CSV): `input_runs/<dataset>/<run>.csv`
 - A merged file of all evaluated pairs: `input_runs/<dataset>/<dataset>_all_runs.csv`
 - Model-based eRAG qrels: `input_runs/<dataset>/<dataset>_all_qrels.csv`
