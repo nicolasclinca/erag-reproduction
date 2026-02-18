@@ -2,7 +2,7 @@ import os
 
 import pytrec_eval
 
-os.environ['IR_DATASETS_HOME'] = '/ssd/data/faggioli/EXPERIMENTAL_COLLECTIONS/ir_datasets'
+os.environ['IR_DATASETS_HOME'] = 'your_path/EXPERIMENTAL_COLLECTIONS/ir_datasets'
 
 import ir_datasets
 import pandas as pd
