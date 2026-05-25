@@ -14,13 +14,13 @@ export OMP_NUM_THREADS=8
 # rm -rf $OUTPUT_DIR
 mkdir -p $OUTPUT_DIR
 
-echo "AVVIO INDICIZZAZIONE CON $ENCODER"
-echo "Totale parti: $NUM_SHARDS"
+echo "START INDEXING WITH $ENCODER"
+echo "Total parts: $NUM_SHARDS"
 
 for ((i=0; i<NUM_SHARDS; i++))
 do
     echo "=================================================="
-    echo "ELABORAZIONE PARTE $i di $NUM_SHARDS"
+    echo "PROCESSING PART $i OF $NUM_SHARDS"
     echo "=================================================="
 
     python -m pyserini.encode \
@@ -32,20 +32,20 @@ do
       encoder --encoder $ENCODER \
               --fields text \
               --batch 128 \
-              --fp16 || { echo "ERRORE CRITICO NELLA PARTE $i"; exit 1; }
+              --fp16 || { echo "CRITICAL ERROR IN $i"; exit 1; }
 
     python -m pyserini.index.faiss \
       --input temp_shard_$i \
       --output $OUTPUT_DIR/part_$i \
       --pq \
       --pq-m 64 \
-      --pq-nbits 8 || { echo "ERRORE INDEXING PARTE $i"; exit 1; }
+      --pq-nbits 8 || { echo "INDEXING ERROR IN $i"; exit 1; }
 
-    echo "Pulizia file temporanei parte $i..."
+    echo "Cleaning temporary files part $i..."
     rm -rf temp_shard_$i
 
-    echo "Parte $i completata. Spazio libero rimasto:"
+    echo "Part $i completed. Remaining free space:"
     df -h . | tail -1 | awk '{print $4}'
 done
 
-echo "TUTTO FINITO CON SUCCESSO!"
+echo "SUCCESSFULLY COMPLETED!"
