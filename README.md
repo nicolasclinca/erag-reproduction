@@ -1,6 +1,6 @@
 # «Quis Aestimabit Ipsas Aestimationes?»: A Reproducibility and Benchmarking Study for RAG Evaluation Methods in Information Retrieval Systems
 
-This repository contains the code for the CIKM ’26 paper titled **«Quis Aestimabit Ipsas Aestimationes?»: A Reproducibility and Benchmarking Study for RAG Evaluation Methods in Information Retrieval Systems**.[LINK PAPER]
+This repository contains the code for the paper titled **«Quis Aestimabit Ipsas Aestimationes?»: A Reproducibility and Benchmarking Study for RAG Evaluation Methods in Information Retrieval Systems**.[LINK PAPER]
 
 
 Retrieval-Augmented Generation (RAG) systems combine a **retriever**, which selects documents from an external knowledge source (e.g., Wikipedia), and a **generator** (LLM), which produces an answer conditioned on the query and the retrieved documents. Accurately evaluating RAG systems, and in particular **isolating the retriever’s contribution**, is challenging.
