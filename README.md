@@ -289,5 +289,5 @@ python src/evaluate_correlations.py \
 ## Citation
 
 If you use this repository, please cite:
-- our CIKM’26 paper [LINK PAPER]
+- our paper [LINK PAPER]
 - eRAG (Salemi & Zamani, SIGIR ’24): https://github.com/alirezasalemi7/eRAG
