@@ -1,13 +1,13 @@
-# A Reproducibility and Benchmarking Study for RAG Evaluation Methods in Information Retrieval Systems
+# A Reproducibility Analysis of Retrieval Component Evaluation in Retrieval-Augmented Generation
 
-This repository contains the code for the paper titled **A Reproducibility and Benchmarking Study for RAG Evaluation Methods in Information Retrieval Systems**.[LINK PAPER]
+This repository contains the code for the paper titled **A Reproducibility Analysis of Retrieval Component Evaluation in Retrieval-Augmented Generation**.
 
 
 Retrieval-Augmented Generation (RAG) systems combine a **retriever**, which selects documents from an external knowledge source (e.g., Wikipedia), and a **generator** (LLM), which produces an answer conditioned on the query and the retrieved documents. Accurately evaluating RAG systems, and in particular **isolating the retriever’s contribution**, is challenging.
 
 Among recent proposals, **eRAG** (Salemi & Zamani, SIGIR ’24) assigns a score to each retrieved document by running the generator **document-by-document**: the generator answers using the query and a single retrieved document, the output is scored with the downstream metric against the ground truth, and these per-document scores are then aggregated using standard IR-style metrics. While the original study reports strong correlation with end-to-end RAG performance and efficiency advantages, incorporating LLMs into evaluation raises concerns regarding **reproducibility, replicability, and generalizability**.
 
-This codebase provides (i) a complete pipeline to reproduce the core eRAG experimental setting, and (ii) a benchmarking extension to analyze eRAG behavior across additional retrievers and (iii) to assess its ability to rank retrievers according to end-to-end RAG performance, as discussed in the paper. [LINK PAPER]
+This codebase provides (i) a complete pipeline to reproduce the core eRAG experimental setting, and (ii) a benchmarking extension to analyze eRAG behavior across additional retrievers and (iii) to assess its ability to rank retrievers according to end-to-end RAG performance, as discussed in the paper.
 
 ---
 
